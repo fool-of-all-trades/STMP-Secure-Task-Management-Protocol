@@ -1,0 +1,4 @@
+psycopg[binary]
+argon2-cffi
+python-dotenv
+pytest

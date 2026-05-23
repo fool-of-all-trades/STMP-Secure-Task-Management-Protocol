@@ -1,7 +1,15 @@
 """Login screen for STMP Secure Task Manager"""
+import sys
+from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox
 from auth_utils import validate_username, validate_password, COLOR_PRIMARY, COLOR_ERROR, get_button_styles, prepare_screen
+
+root_path = Path(__file__).resolve().parents[2]
+if str(root_path) not in sys.path:
+    sys.path.insert(0, str(root_path))
+
+from server.services.auth_service import login_user
 
 def show_login_screen(root, on_success, on_navigate_register, on_back):
     prepare_screen(root, 450, 400, "STMP - Sign In")
@@ -38,8 +46,18 @@ def show_login_screen(root, on_success, on_navigate_register, on_back):
         if not is_valid:
             error_label.config(text=msg)
             return
-            
-        messagebox.showinfo("Success", f"Logged in successfully as: {username}")
+
+        try:
+            result = login_user(username, password, "127.0.0.1")
+        except Exception:
+            error_label.config(text="Unable to login. Please check the database connection.")
+            return
+
+        if not result.get("ok"):
+            error_label.config(text=result.get("message", "Login failed."))
+            return
+
+        messagebox.showinfo("Success", result.get("message", f"Logged in successfully as: {username}"))
         on_success(username)
         
     button_frame = tk.Frame(root)

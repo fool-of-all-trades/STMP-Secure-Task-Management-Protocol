@@ -1,7 +1,15 @@
 """Registration screen for STMP Secure Task Manager"""
+import sys
+from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox
 from auth_utils import validate_username, validate_password, COLOR_PRIMARY, COLOR_ERROR, get_button_styles, prepare_screen
+
+root_path = Path(__file__).resolve().parents[2]
+if str(root_path) not in sys.path:
+    sys.path.insert(0, str(root_path))
+
+from server.services.auth_service import register_user
 
 def show_registration_screen(root, on_success, on_navigate_login, on_back):
     prepare_screen(root, 450, 450, "STMP - Create Account")
@@ -47,8 +55,18 @@ def show_registration_screen(root, on_success, on_navigate_login, on_back):
         if password != confirm_password:
             message_label.config(text="Passwords do not match!")
             return
-            
-        messagebox.showinfo("Success", f"Registration for user '{username}' completed successfully!")
+
+        try:
+            result = register_user(username, password, "127.0.0.1")
+        except Exception:
+            message_label.config(text="Unable to register user. Please check the database connection.")
+            return
+
+        if not result.get("ok"):
+            message_label.config(text=result.get("message", "Registration failed."))
+            return
+
+        messagebox.showinfo("Success", result.get("message", f"Registration for user '{username}' completed successfully!"))
         on_success()
 
     button_frame = tk.Frame(root)

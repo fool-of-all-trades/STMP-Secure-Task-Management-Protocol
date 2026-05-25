@@ -8,3 +8,6 @@ server/logs/
 *.log
 certs/*.key
 todo
+
+server/certs/*.key
+server/certs/*.crt

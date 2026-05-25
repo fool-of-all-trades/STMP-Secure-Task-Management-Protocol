@@ -1,0 +1,3 @@
+Żeby serwer działał wam lokalnie, każdy musi sobie sam wygenerować self-signed certyfikat na swoim komputerze. 
+Będąc w głównym folderze projektu wkleicie w terminal komendę:
+openssl req -x509 -newkey rsa:4096 -keyout server/certs/server.key -out server/certs/server.crt -days 365 -nodes -subj "/CN=localhost"

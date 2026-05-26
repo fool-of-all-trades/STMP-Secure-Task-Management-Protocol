@@ -132,10 +132,13 @@ async def _client_loop(
             logger.info("Timeout klienta %s – zamykam połączenie", ip)
             break
         except asyncio.IncompleteReadError:
-            logger.info("Klient %s rozłączył się", ip)
+            logger.info("Klient %s rozlaczyl sie", ip)
+            break
+        except OSError as exc:
+            logger.debug("Polaczenie zerwane dla %s: %s", ip, exc)
             break
         except Exception as exc:
-            logger.warning("Błąd parsowania dla %s: %s", ip, exc)
+            logger.warning("Blad parsowania dla %s: %s", ip, exc)
             break
 
         # Jeśli parser zwrócił błąd, wyślij ERROR i kontynuuj
@@ -195,6 +198,15 @@ def _build_ssl_context() -> ssl.SSLContext:
 # serwer ==========================================================================
 
 async def main() -> None:
+    def exception_handler(loop, context):
+        exc = context.get("exception")
+        if isinstance(exc, ConnectionResetError):
+            return  # ignoruj
+        loop.default_exception_handler(context)
+
+    loop = asyncio.get_event_loop()
+    loop.set_exception_handler(exception_handler)
+    
     ssl_ctx = _build_ssl_context()
 
     server = await asyncio.start_server(

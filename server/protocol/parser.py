@@ -5,14 +5,13 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger("parser")
 
+# konfiguracja
 SUPPORTED_VERSION = "1.0"
 MAX_MESSAGE_SIZE = 64 * 1024  # 64 KB
-FRAME_TIMEOUT = 3  # sekundy – timeout na odebranie pełnej ramki
+FRAME_TIMEOUT = 3  # sekundy
 
-# Wymagane pola w każdej wiadomości
 REQUIRED_FIELDS = {"type", "version", "request_id", "timestamp", "payload"}
 
-# Typy wiadomości które serwer obsługuje
 ALLOWED_TYPES = {
     "HELLO",
     "LOGIN",
@@ -29,7 +28,6 @@ ALLOWED_TYPES = {
 
 
 def _build_error(error_code: int, message: str) -> dict:
-    """Buduje odpowiedź błędu dla handlera."""
     return {
         "ok": False,
         "error_code": error_code,
@@ -38,10 +36,6 @@ def _build_error(error_code: int, message: str) -> dict:
 
 
 def _validate_field_type(field_name: str, value, expected_type: type) -> dict | None:
-    """
-    Waliduje typ pola.
-    Zwraca błąd jeśli typ się nie zgadza, None jeśli OK.
-    """
     if not isinstance(value, expected_type):
         return _build_error(
             104,
@@ -52,132 +46,63 @@ def _validate_field_type(field_name: str, value, expected_type: type) -> dict | 
 
 
 def _validate_message_structure(message: dict) -> dict | None:
-    """
-    Waliduje strukturę wiadomości.
-    Zwraca błąd lub None jeśli OK.
-    """
-
-
     missing = REQUIRED_FIELDS - set(message.keys())
     if missing:
-        return _build_error(
-            103,
-            f"Missing required fields: {', '.join(sorted(missing))}",
-        )
+        return _build_error(103, f"Missing required fields: {', '.join(sorted(missing))}")
 
-    # Walidacja typów pól 
-
-    error = _validate_field_type("type", message["type"], str)
-    if error:
-        return error
-
-    error = _validate_field_type("version", message["version"], str)
-    if error:
-        return error
-
-    error = _validate_field_type("request_id", message["request_id"], str)
-    if error:
-        return error
-
-    error = _validate_field_type("timestamp", message["timestamp"], str)
-    if error:
-        return error
-
-    error = _validate_field_type("payload", message["payload"], dict)
-    if error:
-        return error
-
-    # Walidacja wersji protokołu
+    for field, expected in [
+        ("type", str), ("version", str), ("request_id", str),
+        ("timestamp", str), ("payload", dict),
+    ]:
+        error = _validate_field_type(field, message[field], expected)
+        if error:
+            return error
 
     if message["version"] != SUPPORTED_VERSION:
-        return _build_error(
-            102,
-            f"Unsupported protocol version: {message['version']} "
-            f"(expected {SUPPORTED_VERSION})",
-        )
-
-    # Walidacja typu wiadomości
+        return _build_error(102, f"Unsupported protocol version: {message['version']}")
 
     if message["type"] not in ALLOWED_TYPES:
-        return _build_error(
-            101,
-            f"Unknown message type: {message['type']}",
-        )
-
-    # request_id nie powinno być puste 
+        return _build_error(101, f"Unknown message type: {message['type']}")
 
     if not message["request_id"].strip():
-        return _build_error(
-            103,
-            "request_id cannot be empty",
-        )
-
-    # timestamp powinien być w formacie ISO 8601
+        return _build_error(103, "request_id cannot be empty")
 
     try:
         datetime.fromisoformat(message["timestamp"].replace("Z", "+00:00"))
     except ValueError:
-        return _build_error(
-            100,
-            "Invalid timestamp format (expected ISO 8601, e.g., 2026-03-10T18:30:00Z)",
-        )
+        return _build_error(100, "Invalid timestamp format (expected ISO 8601)")
 
     return None
 
 
-# Czytanie ramki
-
-async def _read_exact(
-    reader: asyncio.StreamReader,
-    n: int,
-    timeout: float = FRAME_TIMEOUT,
-) -> bytes | None:
+async def _read_exact(reader: asyncio.StreamReader, n: int) -> bytes:
     """
-    Czyta dokładnie n bajtów z reader'a z timeoutem.
-    Zwraca None jeśli timeout lub koniec strumienia.
+    Czyta dokladnie n bajtow.
+    Rzuca asyncio.IncompleteReadError jesli klient sie rozlaczyl.
+    Rzuca asyncio.TimeoutError jesli minol FRAME_TIMEOUT.
     """
-    try:
-        data = await asyncio.wait_for(reader.readexactly(n), timeout=timeout)
-        return data
-    except asyncio.TimeoutError:
-        logger.warning("Frame timeout – client didn't send data within %s seconds", timeout)
-        return None
-    except asyncio.IncompleteReadError:
-        logger.warning("Incomplete frame – client disconnected")
-        return None
+    return await asyncio.wait_for(reader.readexactly(n), timeout=FRAME_TIMEOUT)
 
 
 async def parse_message(reader: asyncio.StreamReader) -> dict:
     """
-    Parsuje wiadomość z klienta.
+    Parsuje wiadomosc z klienta.
+    Rzuca IncompleteReadError lub TimeoutError jesli brak danych.
+    Zwraca {"ok": True, "message": {...}} lub {"ok": False, "error_code": ..., "message": "..."}
     """
-
-    # Czytaj nagłówek (4 bajty – rozmiar) i payload (JSON)
-
-    size_bytes = await _read_exact(reader, 4, timeout=FRAME_TIMEOUT)
-    if size_bytes is None:
-        return _build_error(100, "Could not read message size (frame timeout)")
-
+    # Czytaj naglowek (4 bajty - rozmiar)
+    size_bytes = await _read_exact(reader, 4)
     message_size = int.from_bytes(size_bytes, byteorder="big")
-
-    # Sprawdź rozmiar
 
     if message_size <= 0:
         return _build_error(100, "Invalid message size (must be > 0)")
 
     if message_size > MAX_MESSAGE_SIZE:
-        return _build_error(
-            105,
-            f"Message too large: {message_size} bytes (max {MAX_MESSAGE_SIZE})",
-        )
+        return _build_error(105, f"Message too large: {message_size} bytes (max {MAX_MESSAGE_SIZE})")
 
-    # Czytaj payload
+    # Czytaj JSON
+    json_bytes = await _read_exact(reader, message_size)
 
-    json_bytes = await _read_exact(reader, message_size, timeout=FRAME_TIMEOUT)
-    if json_bytes is None:
-        return _build_error(100, "Could not read message payload (frame timeout)")
-
-    # Parsuj JSON i waliduj strukturę
     try:
         message_dict = json.loads(json_bytes.decode("utf-8"))
     except json.JSONDecodeError as e:
@@ -186,7 +111,7 @@ async def parse_message(reader: asyncio.StreamReader) -> dict:
         return _build_error(100, "Invalid UTF-8 encoding")
 
     if not isinstance(message_dict, dict):
-        return _build_error(100, "Message must be a JSON object, not array or primitive")
+        return _build_error(100, "Message must be a JSON object")
 
     validation_error = _validate_message_structure(message_dict)
     if validation_error:
@@ -194,20 +119,11 @@ async def parse_message(reader: asyncio.StreamReader) -> dict:
 
     logger.debug("Parsed message: type=%s, request_id=%s", message_dict["type"], message_dict["request_id"])
 
-    return {
-        "ok": True,
-        "message": message_dict,
-    }
+    return {"ok": True, "message": message_dict}
 
-
-# Budowanie odpowiedzi
 
 def build_response(message_type: str, payload: dict, request_id: str = "") -> bytes:
-    """
-    Buduje length-prefixed JSON odpowiedź.
-
-    Zwraca: [4 bajty rozmiar] [JSON]
-    """
+    """Buduje length-prefixed JSON odpowiedz."""
     response = {
         "type": message_type,
         "version": SUPPORTED_VERSION,

@@ -1,6 +1,8 @@
+import json
 import ssl
 import socket
 import pytest
+from datetime import datetime, timezone
 
 
 SERVER_HOST = "127.0.0.1"
@@ -26,7 +28,21 @@ def connect() -> ssl.SSLSocket:
         pytest.skip("Serwer nie jest uruchomiony – odpal: python -m server.server")
 
 
-# ==============================================================================
+def build_dummy_frame() -> bytes:
+    """Buduje poprawną ramkę PING, żeby zadowolić parser serwera."""
+    payload = {
+        "type": "PING",
+        "version": "1.0",
+        "request_id": "test-conn-1",
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "payload": {}
+    }
+    json_bytes = json.dumps(payload).encode("utf-8")
+    size_bytes = len(json_bytes).to_bytes(4, byteorder="big")
+    return size_bytes + json_bytes
+
+
+# ==================================================================================
 
 class TestServerConnection:
 
@@ -36,17 +52,17 @@ class TestServerConnection:
             assert tls.version() == "TLSv1.3"
 
     def test_tls_version_is_1_3(self):
-        """Serwer wymaga TLS 1.3 (nie niżej)."""
+        """Serwer wymaga TLS 1.3."""
         with connect() as tls:
             assert tls.version() == "TLSv1.3", f"Oczekiwano TLSv1.3, dostano {tls.version()}"
 
     def test_server_accepts_data(self):
-        """Serwer nie zamyka połączenia od razu po odebraniu danych."""
+        """Serwer nie zamyka połączenia po odebraniu poprawnej ramki protokołu."""
         with connect() as tls:
-            tls.sendall(b"test")
+            tls.sendall(build_dummy_frame())
             tls.settimeout(1)
             try:
-                data = tls.recv(1024)
+                data = tls.recv(4096)
             except socket.timeout:
                 pass
 
@@ -69,15 +85,17 @@ class TestServerConnection:
         connections = []
         rejected = False
         try:
-            for i in range(7): 
+            for i in range(7):  # limit to 5
                 try:
                     conn = connect()
                     conn.settimeout(0.5)
                     try:
+                        conn.sendall(build_dummy_frame())
                         data = conn.recv(1)
                         if not data:
                             rejected = True
                             break
+                        connections.append(conn)
                     except socket.timeout:
                         connections.append(conn)
                 except (ConnectionResetError, OSError, ssl.SSLError):

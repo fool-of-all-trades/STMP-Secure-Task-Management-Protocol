@@ -1,16 +1,7 @@
-"""
-tests/test_server_connection.py
-
-Testy połączenia TCP + TLS z serwerem.
-Wymaga uruchomionego serwera: python -m server.server
-"""
-
 import ssl
 import socket
 import pytest
 
-
-# ── helpers ──────────────────────────────────────────────────────────────────
 
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 8888
@@ -35,9 +26,9 @@ def connect() -> ssl.SSLSocket:
         pytest.skip("Serwer nie jest uruchomiony – odpal: python -m server.server")
 
 
-# ── testy ─────────────────────────────────────────────────────────────────────
+# ==============================================================================
 
-class TestTLSConnection:
+class TestServerConnection:
 
     def test_connects_successfully(self):
         """Serwer przyjmuje połączenie TLS."""
@@ -54,12 +45,10 @@ class TestTLSConnection:
         with connect() as tls:
             tls.sendall(b"test")
             tls.settimeout(1)
-            # serwer nie powinien zamknąć połączenia (brak odpowiedzi to OK na razie)
             try:
                 data = tls.recv(1024)
-                # jeśli coś dostaliśmy – też OK
             except socket.timeout:
-                pass  # cisza = serwer trzyma połączenie = dobrze
+                pass
 
     def test_multiple_connections(self):
         """Serwer obsługuje wiele jednoczesnych połączeń."""

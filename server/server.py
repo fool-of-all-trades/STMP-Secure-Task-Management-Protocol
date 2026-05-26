@@ -3,6 +3,8 @@ import logging
 import ssl
 from pathlib import Path
 
+from server.protocol.parser import parse_message, build_response
+
 # konfiguracja ================================================================
 
 HOST = "0.0.0.0"
@@ -121,25 +123,50 @@ async def _client_loop(
 
     while True:
         try:
-            # Oczekujemy na dane od klienta z określonym timeoutem
-            data = await asyncio.wait_for(reader.read(65536), timeout=READ_TIMEOUT)
+            # Parser czyta length-prefixed JSON z timeoutem
+            parse_result = await asyncio.wait_for(
+                parse_message(reader),
+                timeout=READ_TIMEOUT,
+            )
         except asyncio.TimeoutError:
             logger.info("Timeout klienta %s – zamykam połączenie", ip)
             break
         except asyncio.IncompleteReadError:
             logger.info("Klient %s rozłączył się", ip)
             break
-
-        if not data:
-            logger.info("Klient %s zamknął połączenie", ip)
+        except Exception as exc:
+            logger.warning("Błąd parsowania dla %s: %s", ip, exc)
             break
 
-        # TODO przekazać `data` do parsera i routera
-        # response = await dispatch(data, writer, ip)
-        # writer.write(response)
-        # await writer.drain()
+        # Jeśli parser zwrócił błąd, wyślij ERROR i kontynuuj
 
-        logger.debug("Odebrano %d bajtów od %s", len(data), ip)
+        if not parse_result["ok"]:
+            error_code = parse_result["error_code"]
+            error_msg = parse_result["message"]
+            logger.warning("Parse error %d dla %s: %s", error_code, ip, error_msg)
+
+            # Wyślij ERROR do klienta
+            error_response = build_response(
+                "ERROR",
+                {"error_code": error_code, "message": error_msg},
+                request_id="",
+            )
+            try:
+                writer.write(error_response)
+                await writer.drain()
+            except Exception as exc:
+                logger.warning("Nie udało się wysłać ERROR do %s: %s", ip, exc)
+                break
+
+            continue
+
+        # TODO router do handlerów 
+
+        message = parse_result["message"]
+        msg_type = message["type"]
+        request_id = message["request_id"]
+
+        logger.info("Odebrała %s od %s (request_id: %s)", msg_type, ip, request_id)
 
 
 # TLS ===========================================================================

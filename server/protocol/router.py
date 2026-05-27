@@ -240,14 +240,14 @@ def dispatch(
     session_token: str | None,
 ) -> tuple[str, dict, ConnectionState | None]:
     """
-    Glowny router – wybiera handler na podstawie typu wiadomosci i stanu.
-
+    Glowny router z obsluga duplikatow.
     Zwraca: (response_type, payload, new_state)
-      - new_state = None oznacza brak zmiany stanu
     """
     msg_type = message["type"]
-
-    # Sprawdz czy typ jest dozwolony w aktualnym stanie
+    request_id = message["request_id"]
+    scope_key = session_token or ip
+ 
+    # Sprawdz stan
     allowed = STATE_ALLOWED.get(state, set())
     if msg_type not in allowed:
         if state == ConnectionState.CONNECTED:
@@ -256,9 +256,31 @@ def dispatch(
             return _error(101, f"Expected LOGIN or REGISTER, got {msg_type}")
         else:
             return _error(201, "Session required")
-
+ 
+    skip_dedup = msg_type in {"PING", "HELLO"}
+ 
+    # Obsluga duplikatow
+    if not skip_dedup:
+        dedup_result = register_request(
+            scope_key=scope_key,
+            request_id=request_id,
+            message_type=msg_type,
+            payload=message["payload"],
+        )
+        if not dedup_result["ok"]:
+            if dedup_result["error_code"] == 301:
+                return _error(301, "Duplicate request")
+            return _error(dedup_result["error_code"], dedup_result["message"])
+ 
     handler = HANDLERS.get(msg_type)
     if not handler:
         return _error(101, f"Unknown message type: {msg_type}")
-
-    return handler(message, state, ip, session_token)
+ 
+    response_type, payload, new_state = handler(message, state, ip, session_token)
+ 
+    # Zapisz kod odpowiedzi w historii
+    if not skip_dedup:
+        response_code = 0 if response_type != "ERROR" else payload.get("error_code", 500)
+        set_request_response_code(scope_key, request_id, response_code)
+ 
+    return response_type, payload, new_state

@@ -1,9 +1,7 @@
-"""Login screen for STMP Secure Task Manager"""
 import sys
 from pathlib import Path
-import tkinter as tk
 from tkinter import messagebox
-from auth_utils import validate_username, validate_password, COLOR_PRIMARY, COLOR_ERROR, get_button_styles, prepare_screen
+from auth_utils import create_auth_base_form, run_common_validation
 
 root_path = Path(__file__).resolve().parents[2]
 if str(root_path) not in sys.path:
@@ -11,66 +9,33 @@ if str(root_path) not in sys.path:
 
 from server.services.auth_service import login_user
 
+# Ekran logowania
 def show_login_screen(root, on_success, on_navigate_register, on_back):
-    prepare_screen(root, 450, 400, "STMP - Sign In")
-    
-    title_label = tk.Label(root, text="Sign In", font=("Segoe UI", 18, "bold"), fg=COLOR_PRIMARY)
-    title_label.pack(pady=(30, 20))
-    
-    tk.Label(root, text="Username:", font=("Segoe UI", 10), anchor="w").pack(padx=40, pady=(0, 5), fill="x")
-    username_entry = tk.Entry(root, font=("Segoe UI", 10), width=30)
-    username_entry.pack(padx=40, pady=(0, 15), fill="x", ipady=5)
-    username_entry.focus()
-    
-    tk.Label(root, text="Password:", font=("Segoe UI", 10), anchor="w").pack(padx=40, pady=(0, 5), fill="x")
-    password_entry = tk.Entry(root, font=("Segoe UI", 10), width=30, show="*")
-    password_entry.pack(padx=40, pady=(0, 20), fill="x", ipady=5)
-    
-    error_label = tk.Label(root, text="", font=("Segoe UI", 9), fg=COLOR_ERROR)
-    error_label.pack(pady=(0, 10))
-    
+    # Walidacja danych logowania
     def handle_login():
         username = username_entry.get().strip()
         password = password_entry.get()
-        
-        if not username or not password:
-            error_label.config(text="Please fill in all fields!")
-            return
-            
-        is_valid, msg = validate_username(username)
-        if not is_valid:
-            error_label.config(text=msg)
-            return
-            
-        is_valid, msg = validate_password(password)
-        if not is_valid:
-            error_label.config(text=msg)
+
+        if not run_common_validation(username, password, message_label):
             return
 
         try:
             result = login_user(username, password, "127.0.0.1")
         except Exception:
-            error_label.config(text="Unable to login. Please check the database connection.")
+            message_label.config(text="Unable to login. Please check the database connection.")
             return
 
         if not result.get("ok"):
-            error_label.config(text=result.get("message", "Login failed."))
+            message_label.config(text=result.get("message", "Login failed."))
             return
 
         messagebox.showinfo("Success", result.get("message", f"Logged in successfully as: {username}"))
         on_success(username)
-        
-    button_frame = tk.Frame(root)
-    button_frame.pack(pady=20)
-    btn_styles = get_button_styles()
-    
-    tk.Button(button_frame, text="Login", command=handle_login, **btn_styles).grid(row=0, column=0, padx=5, ipady=4)
-    tk.Button(button_frame, text="Back", command=on_back, **btn_styles).grid(row=0, column=1, padx=5, ipady=4)
-    
-    register_frame = tk.Frame(root)
-    register_frame.pack(pady=(10, 0))
-    tk.Label(register_frame, text="Don't have an account? ", font=("Segoe UI", 9)).pack(side="left")
-    
-    register_link = tk.Label(register_frame, text="Sign up now", font=("Segoe UI", 9, "underline"), fg="blue", cursor="hand2")
-    register_link.pack(side="left")
-    register_link.bind("<Button-1>", lambda e: on_navigate_register())
+
+    # Budowanie formularza logowania
+    username_entry, password_entry, message_label, _ = create_auth_base_form(
+        root=root, width=450, height=400,
+        window_title="STMP - Sign In", form_title="Sign In",
+        main_btn_text="Login", on_main_action=handle_login, on_back=on_back,
+        nav_text="Don't have an account? ", nav_link_text="Sign up now", on_nav_click=on_navigate_register
+    )

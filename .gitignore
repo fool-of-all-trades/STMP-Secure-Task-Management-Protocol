@@ -11,3 +11,8 @@ todo
 
 server/certs/*.key
 server/certs/*.crt
+.idea/vcs.xml
+.idea/STMP-Secure-Task-Management-Protocol.iml
+.idea/modules.xml
+.idea/misc.xml
+.idea/inspectionProfiles/profiles_settings.xml

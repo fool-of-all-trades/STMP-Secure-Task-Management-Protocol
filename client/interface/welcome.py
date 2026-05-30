@@ -1,8 +1,8 @@
-"""Welcome screen for STMP Secure Task Manager"""
 import tkinter as tk
 from tkinter import messagebox
 from auth_utils import COLOR_PRIMARY, get_button_styles, prepare_screen
 
+# Ekran powitalny po uruchomieniu main.py
 APP_NAME = "STMP Secure Task Manager"
 DESCRIPTION = "Welcome to STMP – Secure Task Manager.\nA simple welcome screen for the application."
 PROJECT_INFO = (

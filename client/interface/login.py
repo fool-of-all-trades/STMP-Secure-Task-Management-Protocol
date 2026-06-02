@@ -1,17 +1,8 @@
-import sys
-from pathlib import Path
 from tkinter import messagebox
 from auth_utils import create_auth_base_form, run_common_validation
 
-root_path = Path(__file__).resolve().parents[2]
-if str(root_path) not in sys.path:
-    sys.path.insert(0, str(root_path))
-
-from server.services.auth_service import login_user
-
 # Ekran logowania
-def show_login_screen(root, on_success, on_navigate_register, on_back):
-    # Walidacja danych logowania
+def show_login_screen(root, coordinator, on_success, on_navigate_register, on_back):
     def handle_login():
         username = username_entry.get().strip()
         password = password_entry.get()
@@ -19,18 +10,23 @@ def show_login_screen(root, on_success, on_navigate_register, on_back):
         if not run_common_validation(username, password, message_label):
             return
 
+        # GUI -> STMP Client -> TLS -> Server
+        future = coordinator.run_async(
+            coordinator.client.request("LOGIN", {"username": username, "password": password})
+        )
+
         try:
-            result = login_user(username, password, "127.0.0.1")
-        except Exception:
-            message_label.config(text="Unable to login. Please check the database connection.")
-            return
+            # Max 5 sekund na odpowiedź, bez blokowania pętli asyncio tła
+            response = future.result(timeout=5.0)
 
-        if not result.get("ok"):
-            message_label.config(text=result.get("message", "Login failed."))
-            return
-
-        messagebox.showinfo("Success", result.get("message", f"Logged in successfully as: {username}"))
-        on_success(username)
+            if response.get("type") == "LOGIN_OK":
+                messagebox.showinfo("Success", f"Logged in successfully as: {username}")
+                on_success(username)
+            else:
+                payload = response.get("payload", {})
+                message_label.config(text=payload.get("message", "Login failed."))
+        except Exception as e:
+            message_label.config(text=f"Network error: {str(e)}")
 
     # Budowanie formularza logowania
     username_entry, password_entry, message_label, _ = create_auth_base_form(

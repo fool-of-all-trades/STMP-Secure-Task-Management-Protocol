@@ -1,86 +1,190 @@
 import asyncio
 import logging
 import ssl
-from pathlib import Path
+import uuid
+from datetime import datetime, timezone
+import json
 
-# Logi ========================================================================
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 logger = logging.getLogger("client")
 
-# Konfiguracja ================================================================
-SERVER_HOST = "127.0.0.1"  # Adres serwera (localhost do testów)
-SERVER_PORT = 8888
+class STMPClient:
+    def __init__(self, host="127.0.0.1", port=8888):
+        self.host = host
+        self.port = port
+        self.reader: asyncio.StreamReader | None = None
+        self.writer: asyncio.StreamWriter | None = None
+        self.session_token: str | None = None
+        self.is_connected = False
+        self._pending_requests: dict[str, asyncio.Future] = {}
+        self._listen_task: asyncio.Task | None = None
+        self._ping_task: asyncio.Task | None = None
+        self._last_activity_time = 0.0
 
-_BASE = Path(__file__).parent
-# Ścieżka do certyfikatu serwera
-CERT_FILE = _BASE.parent / "server" / "certs" / "server.crt"
+    # Nawiązanie połączenie TLS 1.3 i wysłanie komunikatu HELLO.
+    async def connect(self) -> bool:
+        if self.is_connected:
+            return True
 
-
-# TLS Context =================================================================
-def _build_ssl_context() -> ssl.SSLContext:
-    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    ctx.minimum_version = ssl.TLSVersion.TLSv1_3
-
-    if CERT_FILE.exists():
-        ctx.load_verify_locations(cafile=CERT_FILE)
+        ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_3
         ctx.check_hostname = False
-        logger.info("TLS: Loaded server certificate %s for verification.", CERT_FILE)
-    else:
-        logger.warning("Certificate file not found at: %s", CERT_FILE)
-        logger.warning("Running in NO VERIFICATION mode for testing certificate!")
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
+        ctx.verify_mode = ssl.CERT_NONE  # Safe for local self-signed testing
 
-    return ctx
+        try:
+            logger.info("Connecting to %s:%d via TLS 1.3...", self.host, self.port)
+            self.reader, self.writer = await asyncio.open_connection(self.host, self.port, ssl=ctx)
+            self.is_connected = True
+            self._update_activity()
 
+            self._listen_task = asyncio.create_task(self._listen_loop())
 
-# Główna funkcja klienta =======================================================
-async def main() -> None:
-    ssl_ctx = _build_ssl_context()
+            # Wysłanie komunikatu HELLO do serwera
+            response = await self.request("HELLO", {"message": "Hello from GUI Client"})
+            if response.get("type") == "HELLO_OK":
+                logger.info("Handshake successful: HELLO_OK received.")
 
-    logger.info("Attempting to connect to server %s:%d using TLS 1.3...", SERVER_HOST, SERVER_PORT)
+                self._ping_task = asyncio.create_task(self._keep_alive_loop())
+                return True
+            else:
+                logger.error("Server rejected handshake: %s", response)
+                await self.disconnect()
+                return False
+        except Exception as e:
+            logger.error("Failed to connect to server: %s", e)
+            self.is_connected = False
+            return False
 
-    try:
-        reader, writer = await asyncio.open_connection(
-            host=SERVER_HOST,
-            port=SERVER_PORT,
-            ssl=ssl_ctx
-        )
+    # Śledzenie aktywności w panelu użytkownika
+    def _update_activity(self):
+        try:
+            loop = asyncio.get_event_loop()
+            self._last_activity_time = loop.time()
+        except RuntimeError:
+            pass
 
-        # Poniższy blok wykona się TYLKO, gdy handshake TLS zakończy się sukcesem
-        peername = writer.get_extra_info("peername")
-        ssl_object = writer.get_extra_info("ssl_object")
-        cipher = ssl_object.cipher() if ssl_object else ("Unknown", "None", 0)
+    # Automatyczne wstrzykiwanie tokenu do żądań użytkownika
+    def _build_frame(self, msg_type: str, payload: dict) -> bytes:
+        if self.session_token and msg_type not in {"PING", "HELLO", "BYE"}:
+            if "session_token" not in payload:
+                payload["session_token"] = self.session_token
 
-        print("\n" + "=" * 60)
-        print("  [SUCCESS] Connected to STMP server successfully!")
-        print(f"  Server address: {peername[0]}:{peername[1]}")
-        print(f"  Encryption protocol: {cipher[1]} ({cipher[0]})")
-        print("=" * 60 + "\n")
+        message = {
+            "type": msg_type,
+            "version": "1.0",
+            "request_id": str(uuid.uuid4()),
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "payload": payload
+        }
+        json_bytes = json.dumps(message, ensure_ascii=False).encode("utf-8")
+        size_bytes = len(json_bytes).to_bytes(4, byteorder="big")
+        return size_bytes + json_bytes
 
-        logger.info("Connection is active. Closing in 3 seconds...")
-        await asyncio.sleep(3)
+    # Żądanie od serwera ramki
+    async def request(self, msg_type: str, payload: dict, timeout: float = 5.0) -> dict:
+        if not self.is_connected:
+            raise ConnectionError("Client is not connected to the server.")
 
-        logger.info("Closing the connection...")
-        writer.close()
-        await writer.wait_closed()
-        logger.info("Connection closed successfully.")
+        frame_bytes = self._build_frame(msg_type, payload)
+        msg_dict = json.loads(frame_bytes[4:].decode("utf-8"))
+        req_id = msg_dict["request_id"]
 
-    except ssl.SSLError as e:
-        logger.error("[TLS ERROR] Encryption handshake error: %s", e)
-    except ConnectionRefusedError:
-        logger.error("[ERROR] The server refused the connection. Make sure the server is running on the port %d.",
-                     SERVER_PORT)
-    except Exception as e:
-        logger.exception("[ERROR] Unexpected exception while trying to connect: %s", e)
+        loop = asyncio.get_event_loop()
+        future = loop.create_future()
+        self._pending_requests[req_id] = future
 
+        try:
+            self.writer.write(frame_bytes)
+            await self.writer.drain()
+            self._update_activity()
 
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Customer stopped by user.")
+            response = await asyncio.wait_for(future, timeout=timeout)
+
+            # Aktualizowanie tokenów sesji
+            if response.get("type") == "LOGIN_OK":
+                self.session_token = response["payload"].get("session_token")
+            elif response.get("type") == "BYE":
+                self.session_token = None
+
+            return response
+        except asyncio.TimeoutError:
+            logger.warning("Request %s triggered an operational timeout.", req_id)
+            raise asyncio.TimeoutError(f"Request {msg_type} timed out.")
+        finally:
+            self._pending_requests.pop(req_id, None)
+
+    # Wysyłanie okresowe PING w celu utrzymania transmisji
+    async def _keep_alive_loop(self):
+        loop = asyncio.get_event_loop()
+        try:
+            while self.is_connected:
+                await asyncio.sleep(1.0)
+                now = loop.time()
+                # Jeśli minęło 5 sekund bez wysłania paczki, wyślij PING podtrzymujący
+                if now - self._last_activity_time >= 5.0:
+                    try:
+                        await self.request("PING", {})
+                    except Exception:
+                        break
+        except asyncio.CancelledError:
+            pass
+
+    # Ciągłe odczytywanie ramek
+    async def _listen_loop(self):
+        try:
+            while self.is_connected:
+                size_header = await self.reader.readexactly(4)
+                msg_size = int.from_bytes(size_header, byteorder="big")
+
+                json_bytes = await self.reader.readexactly(msg_size)
+                response_dict = json.loads(json_bytes.decode("utf-8"))
+
+                self._update_activity()
+
+                # Ignorowanie ramek PONG w tle
+                if response_dict.get("type") == "PONG":
+                    continue
+
+                req_id = response_dict.get("request_id")
+                if req_id in self._pending_requests:
+                    future = self._pending_requests[req_id]
+                    if not future.done():
+                        future.set_result(response_dict)
+        except asyncio.IncompleteReadError:
+            logger.info("Server terminated connection stream connection cleanly.")
+        except Exception as e:
+            logger.error("Error encountered in server incoming network loop: %s", e)
+        finally:
+            await self._clean_up_state()
+
+    # Czyszczenie komunikatów
+    async def _clean_up_state(self):
+        self.is_connected = False
+        self.session_token = None
+        if self._ping_task:
+            self._ping_task.cancel()
+        for future in self._pending_requests.values():
+            if not future.done():
+                future.set_exception(ConnectionError("Network communication layer severed."))
+        self._pending_requests.clear()
+
+    # Rozłączenie z hostem
+    async def disconnect(self):
+        if self.is_connected:
+            self.is_connected = False
+            if self._ping_task:
+                self._ping_task.cancel()
+            if self._listen_task:
+                self._listen_task.cancel()
+
+            if self.session_token:
+                try:
+                    await asyncio.wait_for(self.request("BYE", {}), timeout=1.5)
+                except Exception:
+                    pass
+
+            if self.writer:
+                self.writer.close()
+                try:
+                    await self.writer.wait_closed()
+                except Exception:
+                    pass

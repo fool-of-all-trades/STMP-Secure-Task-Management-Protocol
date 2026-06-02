@@ -1,18 +1,9 @@
-import sys
-from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox
 from auth_utils import create_auth_base_form, run_common_validation
 
-root_path = Path(__file__).resolve().parents[2]
-if str(root_path) not in sys.path:
-    sys.path.insert(0, str(root_path))
-
-from server.services.auth_service import register_user
-
 # Ekran rejestracji
-def show_registration_screen(root, on_success, on_navigate_login, on_back):
-    # Walidacja danych rejestracji
+def show_registration_screen(root, coordinator, on_success, on_navigate_login, on_back):
     def handle_register():
         username = username_entry.get().strip()
         password = password_entry.get()
@@ -29,19 +20,22 @@ def show_registration_screen(root, on_success, on_navigate_login, on_back):
             message_label.config(text="Passwords do not match!")
             return
 
+        # GUI -> STMP Client -> TLS -> Server
+        future = coordinator.run_async(
+            coordinator.client.request("REGISTER", {"username": username, "password": password})
+        )
+
         try:
-            result = register_user(username, password, "127.0.0.1")
-        except Exception:
-            message_label.config(text="Unable to register user. Please check the database connection.")
-            return
+            response = future.result(timeout=5.0)
 
-        if not result.get("ok"):
-            message_label.config(text=result.get("message", "Registration failed."))
-            return
-
-        messagebox.showinfo("Success",
-                            result.get("message", f"Registration for user '{username}' completed successfully!"))
-        on_success()
+            if response.get("type") == "REGISTER_OK":
+                messagebox.showinfo("Success", f"Registration for user '{username}' completed successfully!")
+                on_success()
+            else:
+                payload = response.get("payload", {})
+                message_label.config(text=payload.get("message", "Registration failed."))
+        except Exception as e:
+            message_label.config(text=f"Network error: {str(e)}")
 
     # Budowanie formularza rejestracji
     username_entry, password_entry, message_label, extra_fields_frame = create_auth_base_form(

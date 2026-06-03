@@ -164,6 +164,21 @@ class STMPClient:
         except asyncio.CancelledError:
             pass
 
+    # Usuwanie zadań
+    async def delete_task(self, task_id: str) -> dict:
+        payload = {
+            "task_id": task_id
+        }
+        try:
+            response = await self.request("DELETE_TASK", payload)
+            if response.get("type") == "TASK_DELETED":
+                return {"success": True, "message": "Task deleted successfully!"}
+
+            error_msg = response.get("payload", {}).get("message", "Failed to delete task.")
+            return {"success": False, "message": error_msg}
+        except Exception as e:
+            return {"success": False, "message": f"Network error: {str(e)}"}
+
     # Ciągłe odczytywanie ramek
     async def _listen_loop(self):
         try:

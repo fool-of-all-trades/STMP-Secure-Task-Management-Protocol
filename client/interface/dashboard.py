@@ -103,11 +103,46 @@ def show_dashboard_screen(root, coordinator, username, on_logout):
         else:
             messagebox.showerror("Error", "Task data context unavailable.")
 
+    def handle_delete_task():
+        selected_item = tree.selection()
+        if not selected_item:
+            messagebox.showwarning("Selection Required", "Please select a task from the list to delete.")
+            return
+
+        # Pobranie ID zaznaczonego wiersza
+        values = tree.item(selected_item[0], "values")
+        task_id = str(values[0])
+        task_title = str(values[1])
+
+        # Wyświetlenie okna z potwierdzeniem
+        if messagebox.askyesno("Confirm Deletion",
+                               f"Are you sure you want to permanently delete task:\n'{task_title}'?"):
+            future = coordinator.run_async(coordinator.client.delete_task(task_id))
+
+            try:
+                # Odbiór komunikatu z klienta
+                result = future.result(timeout=5.0)
+                if result["success"]:
+                    messagebox.showinfo("Success", result["message"])
+                    fetch_tasks_from_server()  # Przeładowanie tabeli po usunięciu
+                else:
+                    messagebox.showerror("Error", result["message"])
+            except Exception as e:
+                messagebox.showerror("Error", f"Application error: {str(e)}")
+
+    # Przycisk "dodaj"
     tk.Button(actions_frame, text="Add a task", command=open_add_task_window, **btn_styles).pack(side="left", padx=5)
 
+    # Przycisk "edytuj"
     btn_styles_edit = btn_styles.copy()
-    btn_styles_edit.update({"bg": "#f39c12", "activebackground": "#e67e22"})  # pomarańczowy kolor przycisku edycji
+    btn_styles_edit.update({"bg": "#f39c12", "activebackground": "#e67e22"})
     tk.Button(actions_frame, text="Edit selected", command=open_edit_task_window, **btn_styles_edit).pack(side="left",
                                                                                                           padx=5)
+    # Przycisk "usuń"
+    btn_styles_delete = btn_styles.copy()
+    btn_styles_delete.update({"bg": "#d32f2f", "activebackground": "#b71c1c"})
+    tk.Button(actions_frame, text="Delete selected", command=handle_delete_task, **btn_styles_delete).pack(side="left",
+                                                                                                           padx=5)
 
+    # Odświeżenie listy zadań od razu po załadowaniu ekranu
     fetch_tasks_from_server()

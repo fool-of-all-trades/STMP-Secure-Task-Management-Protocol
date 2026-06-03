@@ -112,6 +112,15 @@ class STMPClient:
         finally:
             self._pending_requests.pop(req_id, None)
 
+    # Tworzenie nowych zadań
+    async def create_task(self, title: str, description: str, status: str) -> dict:
+        payload = {
+            "title": title,
+            "description": description,
+            "status": status
+        }
+        return await self.request("CREATE_TASK", payload)
+
     # Wysyłanie okresowe PING w celu utrzymania transmisji
     async def _keep_alive_loop(self):
         loop = asyncio.get_event_loop()

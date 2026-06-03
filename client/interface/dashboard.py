@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import messagebox, ttk
 from auth_utils import COLOR_PRIMARY, get_button_styles, prepare_screen
+from task_dialog import show_add_task_dialog
 
 # Ekran główny po zalogowaniu
 def show_dashboard_screen(root, coordinator, username, on_logout):
@@ -44,8 +45,8 @@ def show_dashboard_screen(root, coordinator, username, on_logout):
     tree.heading("title", text="Title")
     tree.heading("status", text="Status")
 
-    tree.column("id", width=50, anchor="center")
-    tree.column("title", width=350, anchor="w")
+    tree.column("id", width=80, anchor="center")
+    tree.column("title", width=320, anchor="w")
     tree.column("status", width=100, anchor="center")
     tree.pack(fill="both", expand=True, pady=5)
 
@@ -69,10 +70,15 @@ def show_dashboard_screen(root, coordinator, username, on_logout):
     actions_frame = tk.Frame(content_frame)
     actions_frame.pack(fill="x", pady=10)
 
-    def add_task_stub():
-        messagebox.showinfo("Action", "The window for adding a new task will open here.")
+    # Wywołanie okna tworzenia nowego zadania
+    def open_add_task_window():
+        show_add_task_dialog(
+            root=root,
+            coordinator=coordinator,
+            on_task_created=fetch_tasks_from_server  # Automatyczne odświeżenie po zapisie
+        )
 
-    tk.Button(actions_frame, text="Add a task", command=add_task_stub, **btn_styles).pack(side="left", padx=5)
+    tk.Button(actions_frame, text="Add a task", command=open_add_task_window, **btn_styles).pack(side="left", padx=5)
 
-    # Odświeżenie listęy zadań od razu po załadowaniu ekranu
+    # Odświeżenie listy zadań od razu po załadowaniu ekranu
     fetch_tasks_from_server()

@@ -1,9 +1,9 @@
 import tkinter as tk
 from tkinter import messagebox, ttk
 from auth_utils import COLOR_PRIMARY, get_button_styles, prepare_screen
-from task_dialog import show_add_task_dialog
+from task_dialog import show_task_dialog
 
-# Ekran główny po zalogowaniu
+
 def show_dashboard_screen(root, coordinator, username, on_logout):
     prepare_screen(root, 600, 500, f"STMP - Dashboard ({username})")
 
@@ -13,11 +13,8 @@ def show_dashboard_screen(root, coordinator, username, on_logout):
     header_frame.pack_propagate(False)
 
     user_label = tk.Label(
-        header_frame,
-        text=f"Logged in as: {username}",
-        font=("Segoe UI", 11, "bold"),
-        fg="white",
-        bg=COLOR_PRIMARY
+        header_frame, text=f"Logged in as: {username}",
+        font=("Segoe UI", 11, "bold"), fg="white", bg=COLOR_PRIMARY
     )
     user_label.pack(side="left", padx=15, pady=10)
 
@@ -39,6 +36,8 @@ def show_dashboard_screen(root, coordinator, username, on_logout):
     title_label.pack(anchor="w", pady=(0, 10))
 
     # Tabela zadań
+    cached_tasks = {}
+
     columns = ("id", "title", "status")
     tree = ttk.Treeview(content_frame, columns=columns, show="headings", height=12)
     tree.heading("id", text="ID")
@@ -54,6 +53,7 @@ def show_dashboard_screen(root, coordinator, username, on_logout):
     def fetch_tasks_from_server():
         for item in tree.get_children():
             tree.delete(item)
+        cached_tasks.clear()
 
         future = coordinator.run_async(coordinator.client.request("GET_TASK", {}))
         try:
@@ -61,7 +61,10 @@ def show_dashboard_screen(root, coordinator, username, on_logout):
             if response.get("type") == "TASK_LIST":
                 tasks = response.get("payload", {}).get("tasks", [])
                 for task in tasks:
-                    tree.insert("", "end", values=(task.get("id"), task.get("title"), task.get("status")))
+                    t_id = task.get("id")
+                    # Zapisanie całego zadanie (razem z opisem),aby je edytować bez ponownego odpytywania sieci
+                    cached_tasks[str(t_id)] = task
+                    tree.insert("", "end", values=(t_id, task.get("title"), task.get("status")))
             elif response.get("type") == "ERROR":
                 messagebox.showerror("Error", response.get("payload", {}).get("message", "Failed to fetch tasks."))
         except Exception as e:
@@ -72,13 +75,39 @@ def show_dashboard_screen(root, coordinator, username, on_logout):
 
     # Wywołanie okna tworzenia nowego zadania
     def open_add_task_window():
-        show_add_task_dialog(
+        show_task_dialog(
             root=root,
             coordinator=coordinator,
-            on_task_created=fetch_tasks_from_server  # Automatyczne odświeżenie po zapisie
+            on_success=fetch_tasks_from_server
         )
+
+    # Wywołanie okna edycja zadania (wywołanie ze sparsowanymi danymi z cache)
+    def open_edit_task_window():
+        selected_item = tree.selection()
+        if not selected_item:
+            messagebox.showwarning("Selection Required", "Please select a task from the list to edit.")
+            return
+
+        # Pobranie ID zaznaczonego wiersza
+        values = tree.item(selected_item[0], "values")
+        task_id = str(values[0])
+
+        task_data = cached_tasks.get(task_id)
+        if task_data:
+            show_task_dialog(
+                root=root,
+                coordinator=coordinator,
+                on_success=fetch_tasks_from_server,
+                task_data=task_data  # Przekazanie danych przełącza formularz w tryb EDYCJI
+            )
+        else:
+            messagebox.showerror("Error", "Task data context unavailable.")
 
     tk.Button(actions_frame, text="Add a task", command=open_add_task_window, **btn_styles).pack(side="left", padx=5)
 
-    # Odświeżenie listy zadań od razu po załadowaniu ekranu
+    btn_styles_edit = btn_styles.copy()
+    btn_styles_edit.update({"bg": "#f39c12", "activebackground": "#e67e22"})  # pomarańczowy kolor przycisku edycji
+    tk.Button(actions_frame, text="Edit selected", command=open_edit_task_window, **btn_styles_edit).pack(side="left",
+                                                                                                          padx=5)
+
     fetch_tasks_from_server()

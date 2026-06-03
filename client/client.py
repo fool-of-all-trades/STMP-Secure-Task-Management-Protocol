@@ -119,7 +119,34 @@ class STMPClient:
             "description": description,
             "status": status
         }
-        return await self.request("CREATE_TASK", payload)
+        try:
+            response = await self.request("CREATE_TASK", payload)
+            if response.get("type") == "TASK_CREATED":
+                return {"success": True, "message": "Task created successfully!"}
+
+            # Pobieranie błędu z payloadu serwera
+            error_msg = response.get("payload", {}).get("message", "Failed to create task.")
+            return {"success": False, "message": error_msg}
+        except Exception as e:
+            return {"success": False, "message": f"Network error: {str(e)}"}
+
+    # Edycja zadań
+    async def update_task(self, task_id: str, title: str, description: str, status: str) -> dict:
+        payload = {
+            "task_id": task_id,
+            "title": title,
+            "description": description,
+            "status": status
+        }
+        try:
+            response = await self.request("UPDATE_TASK", payload)
+            if response.get("type") == "TASK_UPDATED":
+                return {"success": True, "message": "Task updated successfully!"}
+
+            error_msg = response.get("payload", {}).get("message", "Failed to update task.")
+            return {"success": False, "message": error_msg}
+        except Exception as e:
+            return {"success": False, "message": f"Network error: {str(e)}"}
 
     # Wysyłanie okresowe PING w celu utrzymania transmisji
     async def _keep_alive_loop(self):

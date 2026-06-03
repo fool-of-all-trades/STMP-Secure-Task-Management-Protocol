@@ -2,14 +2,20 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from auth_utils import COLOR_PRIMARY, COLOR_ERROR, get_button_styles
 
-# Ekran dodawania nowych zadań do listy
-def show_add_task_dialog(root, coordinator, on_task_created):
+# Ogólne okno do CRUD zadań
+def show_task_dialog(root, coordinator, on_success, task_data=None):
+    is_edit_mode = task_data is not None
     dialog = tk.Toplevel(root)
-    dialog.title("STMP - Add New Task")
     dialog.transient(root)
     dialog.grab_set()
 
-    # Centrowanie okna dialogowego względem okna głównego
+    window_title = "STMP - Edit Task" if is_edit_mode else "STMP - Add New Task"
+    form_title = "Modify Existing Task" if is_edit_mode else "Create New Task"
+    submit_btn_text = "Update Task" if is_edit_mode else "Save Task"
+
+    dialog.title(window_title)
+
+    # Centrowanie okna
     width, height = 400, 380
     x = root.winfo_x() + (root.winfo_width() // 2) - (width // 2)
     y = root.winfo_y() + (root.winfo_height() // 2) - (height // 2)
@@ -17,7 +23,7 @@ def show_add_task_dialog(root, coordinator, on_task_created):
     dialog.resizable(False, False)
 
     # Nagłówek okna
-    title_label = tk.Label(dialog, text="Create New Task", font=("Segoe UI", 14, "bold"), fg=COLOR_PRIMARY)
+    title_label = tk.Label(dialog, text=form_title, font=("Segoe UI", 14, "bold"), fg=COLOR_PRIMARY)
     title_label.pack(pady=(15, 10))
 
     # Tytuł zadania
@@ -32,7 +38,7 @@ def show_add_task_dialog(root, coordinator, on_task_created):
     desc_text.pack(padx=25, pady=(0, 10), fill="x")
 
     # Status zadania
-    tk.Label(dialog, text="Initial Status:", font=("Segoe UI", 10), anchor="w").pack(padx=25, pady=(5, 2), fill="x")
+    tk.Label(dialog, text="Status:", font=("Segoe UI", 10), anchor="w").pack(padx=25, pady=(5, 2), fill="x")
     status_combobox = ttk.Combobox(dialog, values=["todo", "done"], state="readonly", font=("Segoe UI", 10))
     status_combobox.set("todo")
     status_combobox.pack(padx=25, pady=(0, 15), fill="x")
@@ -40,6 +46,12 @@ def show_add_task_dialog(root, coordinator, on_task_created):
     # Etykieta komunikatów o błędach
     error_label = tk.Label(dialog, text="", font=("Segoe UI", 9), fg=COLOR_ERROR, wraplength=350)
     error_label.pack()
+
+    # Wypełnianie pól danymi (dla edycja)
+    if is_edit_mode:
+        title_entry.insert(0, task_data.get("title", ""))
+        desc_text.insert("1.0", task_data.get("description", ""))
+        status_combobox.set(task_data.get("status", "todo"))
 
     def handle_submit():
         title = title_entry.get().strip()
@@ -50,31 +62,37 @@ def show_add_task_dialog(root, coordinator, on_task_created):
             error_label.config(text="Task title is required!")
             return
 
-        # Wywołanie dodawania zadania przez clienta
-        future = coordinator.run_async(
-            coordinator.client.create_task(title, description, status)
-        )
+        # Wybór odpowiedniej metody z klienta
+        if is_edit_mode:
+            task_id = task_data.get("id")
+            coroutine = coordinator.client.update_task(task_id, title, description, status)
+        else:
+            coroutine = coordinator.client.create_task(title, description, status)
+
+        future = coordinator.run_async(coroutine)
 
         try:
-            response = future.result(timeout=5.0)
+            # Klient zwraca już ujednolicony słownik z gotowym komunikatem
+            result = future.result(timeout=5.0)
 
-            if response.get("type") == "TASK_CREATED":
-                messagebox.showinfo("Success", "Task created successfully!", parent=dialog)
+            if result["success"]:
+                messagebox.showinfo("Success", result["message"], parent=dialog)
                 dialog.destroy()
-                on_task_created()  # Wywołanie odświeżenia tabeli w dashboardzie
+                on_success()  # Odświeżenie widoku tabeli głównej
             else:
-                payload = response.get("payload", {})
-                error_label.config(text=payload.get("message", "Failed to create task."))
+                error_label.config(text=result["message"])
         except Exception as e:
-            error_label.config(text=f"Network error: {str(e)}")
+            error_label.config(text=f"Application error: {str(e)}")
 
-    # Sekcja przycisków akcji
+    # Przyciski
     button_frame = tk.Frame(dialog)
     button_frame.pack(pady=15, side="bottom")
     btn_styles = get_button_styles()
 
-    tk.Button(button_frame, text="Save Task", command=handle_submit, **btn_styles).grid(row=0, column=0, padx=5, ipady=2)
+    tk.Button(button_frame, text=submit_btn_text, command=handle_submit, **btn_styles).grid(row=0, column=0, padx=5,
+                                                                                            ipady=2)
 
     btn_styles_cancel = btn_styles.copy()
     btn_styles_cancel.update({"bg": "#7f8c8d", "activebackground": "#95a5a6"})
-    tk.Button(button_frame, text="Cancel", command=dialog.destroy, **btn_styles_cancel).grid(row=0, column=1, padx=5, ipady=2)
+    tk.Button(button_frame, text="Cancel", command=dialog.destroy, **btn_styles_cancel).grid(row=0, column=1, padx=5,
+                                                                                             ipady=2)

@@ -5,7 +5,7 @@ from task_dialog import show_task_dialog
 
 
 def show_dashboard_screen(root, coordinator, username, on_logout):
-    prepare_screen(root, 600, 500, f"STMP - Dashboard ({username})")
+    prepare_screen(root, 750, 500, f"STMP - Dashboard ({username})")
 
     # Górny pasek
     header_frame = tk.Frame(root, bg=COLOR_PRIMARY, height=50)
@@ -38,18 +38,20 @@ def show_dashboard_screen(root, coordinator, username, on_logout):
     # Tabela zadań
     cached_tasks = {}
 
-    columns = ("id", "title", "status")
+    columns = ("id", "title", "description", "status")
     tree = ttk.Treeview(content_frame, columns=columns, show="headings", height=12)
     tree.heading("id", text="ID")
     tree.heading("title", text="Title")
+    tree.heading("description", text="Description")
     tree.heading("status", text="Status")
 
-    tree.column("id", width=80, anchor="center")
-    tree.column("title", width=320, anchor="w")
+    tree.column("id", width=60, anchor="center")
+    tree.column("title", width=220, anchor="w")
+    tree.column("description", width=310, anchor="w")
     tree.column("status", width=100, anchor="center")
     tree.pack(fill="both", expand=True, pady=5)
 
-    # Pobranie zadania z serwera przez protokół sieciowy
+    # Pobranie zadań z serwera przez protokół sieciowy
     def fetch_tasks_from_server():
         for item in tree.get_children():
             tree.delete(item)
@@ -64,11 +66,12 @@ def show_dashboard_screen(root, coordinator, username, on_logout):
                     t_id = task.get("id")
                     # Zapisanie całego zadanie (razem z opisem),aby je edytować bez ponownego odpytywania sieci
                     cached_tasks[str(t_id)] = task
-                    tree.insert("", "end", values=(t_id, task.get("title"), task.get("status")))
+                    clean_desc = task.get("description", "").replace("\n", " ")
+                    tree.insert("", "end", values=(t_id, task.get("title"), clean_desc, task.get("status")))
             elif response.get("type") == "ERROR":
                 messagebox.showerror("Error", response.get("payload", {}).get("message", "Failed to fetch tasks."))
         except Exception as e:
-            tree.insert("", "end", values=("!", "No tasks fetched from server yet", "mock"))
+            tree.insert("", "end", values=("!", "No tasks fetched from server yet", "", "mock"))
 
     actions_frame = tk.Frame(content_frame)
     actions_frame.pack(fill="x", pady=10)

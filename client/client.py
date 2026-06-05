@@ -5,6 +5,8 @@ import uuid
 from datetime import datetime, timezone
 import json
 
+from .session_manager import STMPSessionManager, SessionState
+
 logger = logging.getLogger("client")
 
 class STMPClient:
@@ -13,36 +15,46 @@ class STMPClient:
         self.port = port
         self.reader: asyncio.StreamReader | None = None
         self.writer: asyncio.StreamWriter | None = None
-        self.session_token: str | None = None
         self.is_connected = False
         self._pending_requests: dict[str, asyncio.Future] = {}
         self._listen_task: asyncio.Task | None = None
         self._ping_task: asyncio.Task | None = None
         self._last_activity_time = 0.0
 
-    # Nawiązanie połączenie TLS 1.3 i wysłanie komunikatu HELLO.
+        self.session = STMPSessionManager(self)
+
+    @property
+    def session_token(self):
+        return self.session.session_token
+
+    def _get_ssl_context(self) -> ssl.SSLContext:
+        ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_3
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE  # Akceptacja samopodpisanego certyfikatu testowego
+        return ctx
+
     async def connect(self) -> bool:
         if self.is_connected:
             return True
 
-        ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-        ctx.minimum_version = ssl.TLSVersion.TLSv1_3
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE  # Safe for local self-signed testing
-
+        ctx = self._get_ssl_context()
         try:
             logger.info("Connecting to %s:%d via TLS 1.3...", self.host, self.port)
             self.reader, self.writer = await asyncio.open_connection(self.host, self.port, ssl=ctx)
             self.is_connected = True
             self._update_activity()
 
+            # Uruchomienie pętli odbierającej komunikaty w tle
             self._listen_task = asyncio.create_task(self._listen_loop())
 
-            # Wysłanie komunikatu HELLO do serwera
+            # Handshake aplikacyjny
             response = await self.request("HELLO", {"message": "Hello from GUI Client"})
             if response.get("type") == "HELLO_OK":
                 logger.info("Handshake successful: HELLO_OK received.")
+                self.session.update_state(SessionState.CONNECTED)
 
+                # Uruchomienie mechanizmu podtrzymywania połączenia (Keep-Alive)
                 self._ping_task = asyncio.create_task(self._keep_alive_loop())
                 return True
             else:
@@ -64,9 +76,9 @@ class STMPClient:
 
     # Automatyczne wstrzykiwanie tokenu do żądań użytkownika
     def _build_frame(self, msg_type: str, payload: dict) -> bytes:
-        if self.session_token and msg_type not in {"PING", "HELLO", "BYE"}:
+        if self.session.session_token and msg_type not in {"PING", "HELLO", "BYE"}:
             if "session_token" not in payload:
-                payload["session_token"] = self.session_token
+                payload["session_token"] = self.session.session_token
 
         message = {
             "type": msg_type,
@@ -99,11 +111,11 @@ class STMPClient:
 
             response = await asyncio.wait_for(future, timeout=timeout)
 
-            # Aktualizowanie tokenów sesji
+            # Rejestracja stanu sesji w menedżerze na podstawie odpowiedzi sieciowych
             if response.get("type") == "LOGIN_OK":
-                self.session_token = response["payload"].get("session_token")
+                self.session.store_session(response["payload"])
             elif response.get("type") == "BYE":
-                self.session_token = None
+                self.session.clear_session()
 
             return response
         except asyncio.TimeoutError:
@@ -148,23 +160,7 @@ class STMPClient:
         except Exception as e:
             return {"success": False, "message": f"Network error: {str(e)}"}
 
-    # Wysyłanie okresowe PING w celu utrzymania transmisji
-    async def _keep_alive_loop(self):
-        loop = asyncio.get_event_loop()
-        try:
-            while self.is_connected:
-                await asyncio.sleep(1.0)
-                now = loop.time()
-                # Jeśli minęło 5 sekund bez wysłania paczki, wyślij PING podtrzymujący
-                if now - self._last_activity_time >= 5.0:
-                    try:
-                        await self.request("PING", {})
-                    except Exception:
-                        break
-        except asyncio.CancelledError:
-            pass
-
-    # Usuwanie zadań
+    # Usuniecie zadania
     async def delete_task(self, task_id: str) -> dict:
         payload = {
             "task_id": task_id
@@ -179,19 +175,48 @@ class STMPClient:
         except Exception as e:
             return {"success": False, "message": f"Network error: {str(e)}"}
 
+    # Pętla wysyłająca komunikaty PING po 30 sekundach bezczynności
+    async def _keep_alive_loop(self):
+        loop = asyncio.get_event_loop()
+        consecutive_failures = 0
+        try:
+            while self.is_connected:
+                await asyncio.sleep(1.0)
+                now = loop.time()
+
+                if now - self._last_activity_time >= 30.0:
+                    try:
+                        await self.request("PING", {})
+                        consecutive_failures = 0  # Reset po odebraniu PONG
+                    except Exception:
+                        consecutive_failures += 1
+                        # Brak odpowiedzi na 2 kolejne PING = zerwanie połączenia
+                        if consecutive_failures >= 2:
+                            logger.error("Keep-alive timeout. 2 consecutive PINGs failed.")
+                            break
+        except asyncio.CancelledError:
+            pass
+
+        # Wypadliśmy z pętli przy aktywnej sesji = uruchomienie reconnect
+        if self.is_connected or self.session.state == SessionState.SESSION_ACTIVE:
+            await self._close_sockets()
+            asyncio.create_task(self.session.handle_connection_loss())
+
     # Ciągłe odczytywanie ramek
     async def _listen_loop(self):
         try:
             while self.is_connected:
+                # Odczyt 4 bajtów długości ramki
                 size_header = await self.reader.readexactly(4)
                 msg_size = int.from_bytes(size_header, byteorder="big")
 
+                # Odczyt całości JSONa na podstawie odebranej długości
                 json_bytes = await self.reader.readexactly(msg_size)
                 response_dict = json.loads(json_bytes.decode("utf-8"))
 
                 self._update_activity()
 
-                # Ignorowanie ramek PONG w tle
+                # Odfiltrowanie i skonsumowanie odpowiedzi PONG w tle
                 if response_dict.get("type") == "PONG":
                     continue
 
@@ -201,41 +226,42 @@ class STMPClient:
                     if not future.done():
                         future.set_result(response_dict)
         except asyncio.IncompleteReadError:
-            logger.info("Server terminated connection stream connection cleanly.")
+            logger.info("Server closed connection stream clean.")
         except Exception as e:
-            logger.error("Error encountered in server incoming network loop: %s", e)
+            logger.error("Error in client incoming stream loop: %s", e)
         finally:
-            await self._clean_up_state()
+            # Obsługa niespodziewanego rozłączenia wykrytego na gnieździe
+            if self.is_connected:
+                await self._close_sockets()
+                if self.session.state == SessionState.SESSION_ACTIVE:
+                    asyncio.create_task(self.session.handle_connection_loss())
 
-    # Czyszczenie komunikatów
-    async def _clean_up_state(self):
+    # Bezpieczne zamknięcie gniazda sieciowego (bez resetowania tokenów)
+    async def _close_sockets(self):
         self.is_connected = False
-        self.session_token = None
         if self._ping_task:
             self._ping_task.cancel()
-        for future in self._pending_requests.values():
-            if not future.done():
-                future.set_exception(ConnectionError("Network communication layer severed."))
-        self._pending_requests.clear()
-
-    # Rozłączenie z hostem
-    async def disconnect(self):
-        if self.is_connected:
-            self.is_connected = False
-            if self._ping_task:
-                self._ping_task.cancel()
-            if self._listen_task:
-                self._listen_task.cancel()
-
-            if self.session_token:
-                try:
-                    await asyncio.wait_for(self.request("BYE", {}), timeout=1.5)
-                except Exception:
-                    pass
-
-            if self.writer:
+        if self.writer:
+            try:
                 self.writer.close()
-                try:
-                    await self.writer.wait_closed()
-                except Exception:
-                    pass
+                await self.writer.wait_closed()
+            except Exception:
+                pass
+        self.writer = None
+        self.reader = None
+
+    # Całkowite wylogowanie i zamknięcie połączenia
+    async def disconnect(self):
+        self.session.clear_session()
+        if self._ping_task:
+            self._ping_task.cancel()
+        if self._listen_task:
+            self._listen_task.cancel()
+
+        if self.is_connected and self.writer:
+            # Wysłanie komunikatu pożegnalnego przed zamknięciem gniazda
+            try:
+                await asyncio.wait_for(self.request("BYE", {}), timeout=1.5)
+            except Exception:
+                pass
+        await self._close_sockets()

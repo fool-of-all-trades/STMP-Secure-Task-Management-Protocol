@@ -94,9 +94,24 @@ class STMPGuiController:
         )
 
     def handle_logout(self):
-        # Bezpieczne rozłączenie w tle
+        # Rozłączenie starego klienta w tle
         self.run_async(self.client.disconnect())
-        self.navigate_to_welcome()
+
+        # Nowy klient = czyste połączenie
+        self.client = STMPClient(host="127.0.0.1", port=8888)
+        future = self.run_async(self.client.connect())
+
+        def on_reconnected():
+            try:
+                connected = future.result(timeout=5.0)
+                if connected:
+                    self.navigate_to_welcome()
+                else:
+                    self._show_critical_error("Could not reconnect after logout.")
+            except Exception as e:
+                self._show_critical_error(f"Reconnect failure: {e}")
+
+        self.root.after(100, on_reconnected)
 
 
 def main():

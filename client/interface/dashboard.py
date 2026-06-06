@@ -3,6 +3,7 @@ from tkinter import messagebox, ttk
 from auth_utils import COLOR_PRIMARY, get_button_styles, prepare_screen
 from task_dialog import show_task_dialog
 from datetime import datetime, timezone
+from reauth_dialog import show_reauth_dialog
 
 
 def show_dashboard_screen(root, coordinator, username, on_logout):
@@ -172,8 +173,9 @@ def show_dashboard_screen(root, coordinator, username, on_logout):
     expires_label = tk.Label(status_bar, font=("Segoe UI", 9), padx=10, anchor="e", fg="#555")
     expires_label.pack(side="right")
 
-    # Zmienna do zatrzymania pętli odświeżania po wyjściu z dashboardu
-    _active = [True]
+    # Zmienne sterujące pętlą odświeżania
+    _active      = [True]   # False = dashboard został opuszczony
+    _reauth_open = [False]  # True = dialog reauth już widoczny (nie otwieramy drugiego)
 
     def refresh_status_bar():
         if not _active[0]:
@@ -197,6 +199,26 @@ def show_dashboard_screen(root, coordinator, username, on_logout):
                 expires_label.config(text="Token expired", bg=bg, fg="#c62828")
         else:
             expires_label.config(text="", bg=bg)
+
+        # Dialog reauth gdy sesja padnie (tylko raz)
+        if state in ("DISCONNECTED", "SESSION_EXPIRED") and not _reauth_open[0]:
+            _reauth_open[0] = True
+
+            def on_reauth_success():
+                _reauth_open[0] = False
+                fetch_tasks_from_server()   # Odśwież tabelę po powrocie do sesji
+
+            def on_reauth_logout():
+                _active[0] = False
+                on_logout_with_cleanup()
+
+            show_reauth_dialog(
+                root=root,
+                coordinator=coordinator,
+                username=username,
+                on_success=on_reauth_success,
+                on_logout=on_reauth_logout,
+            )
 
         root.after(1000, refresh_status_bar)
 

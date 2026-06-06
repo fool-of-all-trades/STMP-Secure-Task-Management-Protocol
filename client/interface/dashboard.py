@@ -2,10 +2,11 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from auth_utils import COLOR_PRIMARY, get_button_styles, prepare_screen
 from task_dialog import show_task_dialog
+from datetime import datetime, timezone
 
 
 def show_dashboard_screen(root, coordinator, username, on_logout):
-    prepare_screen(root, 750, 500, f"STMP - Dashboard ({username})")
+    prepare_screen(root, 750, 530, f"STMP - Dashboard ({username})")
 
     # Górny pasek
     header_frame = tk.Frame(root, bg=COLOR_PRIMARY, height=50)
@@ -101,7 +102,7 @@ def show_dashboard_screen(root, coordinator, username, on_logout):
                 root=root,
                 coordinator=coordinator,
                 on_success=fetch_tasks_from_server,
-                task_data=task_data  # Przekazanie danych przełącza formularz w tryb EDYCJI
+                task_data=task_data
             )
         else:
             messagebox.showerror("Error", "Task data context unavailable.")
@@ -127,7 +128,7 @@ def show_dashboard_screen(root, coordinator, username, on_logout):
                 result = future.result(timeout=5.0)
                 if result["success"]:
                     messagebox.showinfo("Success", result["message"])
-                    fetch_tasks_from_server()  # Przeładowanie tabeli po usunięciu
+                    fetch_tasks_from_server()
                 else:
                     messagebox.showerror("Error", result["message"])
             except Exception as e:
@@ -139,13 +140,73 @@ def show_dashboard_screen(root, coordinator, username, on_logout):
     # Przycisk "edytuj"
     btn_styles_edit = btn_styles.copy()
     btn_styles_edit.update({"bg": "#f39c12", "activebackground": "#e67e22"})
-    tk.Button(actions_frame, text="Edit selected", command=open_edit_task_window, **btn_styles_edit).pack(side="left",
-                                                                                                          padx=5)
-    # Przycisk "usuń"
+    tk.Button(actions_frame, text="Edit selected", command=open_edit_task_window, **btn_styles_edit).pack(side="left", padx=5)
+
     btn_styles_delete = btn_styles.copy()
     btn_styles_delete.update({"bg": "#d32f2f", "activebackground": "#b71c1c"})
-    tk.Button(actions_frame, text="Delete selected", command=handle_delete_task, **btn_styles_delete).pack(side="left",
-                                                                                                           padx=5)
+    tk.Button(actions_frame, text="Delete selected", command=handle_delete_task, **btn_styles_delete).pack(side="left", padx=5)
 
-    # Odświeżenie listy zadań od razu po załadowaniu ekranu
+    # Pasek statusu sesji
+    STATUS_COLORS = {
+        "SESSION_ACTIVE":   ("#e8f5e9", "#2e7d32"),
+        "CONNECTED":        ("#e3f2fd", "#1565c0"),
+        "WAITING_FOR_AUTH": ("#fff8e1", "#f57f17"),
+        "DISCONNECTED":     ("#ffebee", "#c62828"),
+        "SESSION_EXPIRED":  ("#fce4ec", "#880e4f"),
+    }
+    STATUS_LABELS = {
+        "SESSION_ACTIVE":   "● Session active",
+        "CONNECTED":        "● Connected — not authenticated",
+        "WAITING_FOR_AUTH": "● Waiting for authentication...",
+        "DISCONNECTED":     "● Disconnected",
+        "SESSION_EXPIRED":  "● Session expired — please log in again",
+    }
+
+    status_bar = tk.Frame(root, height=28)
+    status_bar.pack(fill="x", side="bottom")
+    status_bar.pack_propagate(False)
+
+    status_dot = tk.Label(status_bar, font=("Segoe UI", 9), padx=10, anchor="w")
+    status_dot.pack(side="left", fill="both", expand=True)
+
+    expires_label = tk.Label(status_bar, font=("Segoe UI", 9), padx=10, anchor="e", fg="#555")
+    expires_label.pack(side="right")
+
+    # Zmienna do zatrzymania pętli odświeżania po wyjściu z dashboardu
+    _active = [True]
+
+    def refresh_status_bar():
+        if not _active[0]:
+            return
+
+        state = coordinator.client.session.state
+        bg, fg = STATUS_COLORS.get(state, ("#f5f5f5", "#333333"))
+        text   = STATUS_LABELS.get(state, f"● {state}")
+
+        status_bar.config(bg=bg)
+        status_dot.config(text=text, bg=bg, fg=fg)
+
+        exp = coordinator.client.session.expires_at
+        if exp:
+            remaining = exp - datetime.now(timezone.utc)
+            total_sec = int(remaining.total_seconds())
+            if total_sec > 0:
+                mins, secs = divmod(total_sec, 60)
+                expires_label.config(text=f"Token expires in: {mins}m {secs:02d}s", bg=bg, fg="#555")
+            else:
+                expires_label.config(text="Token expired", bg=bg, fg="#c62828")
+        else:
+            expires_label.config(text="", bg=bg)
+
+        root.after(1000, refresh_status_bar)
+
+    # Zatrzymanie odświeżania przy wyjściu z dashboardu (np. logout)
+    original_on_logout = on_logout
+    def on_logout_with_cleanup():
+        _active[0] = False
+        original_on_logout()
+
+    logout_button.config(command=lambda: messagebox.askyesno("Logout", "Are you sure you want to log out?") and on_logout_with_cleanup())
+
     fetch_tasks_from_server()
+    refresh_status_bar()

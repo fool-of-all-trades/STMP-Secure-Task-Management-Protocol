@@ -88,6 +88,7 @@ class STMPClient(TaskAPI):
         request_id = extract_request_id(frame)
 
         response = await self.connection.send_frame(frame, request_id, timeout)
+        logger.debug(response.get("type", "?"))
 
         # Aktualizacja stanu sesji na podstawie odpowiedzi
         if response.get("type") == MsgType.LOGIN_OK:

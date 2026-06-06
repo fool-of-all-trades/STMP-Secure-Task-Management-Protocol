@@ -9,6 +9,14 @@ from registration import show_registration_screen
 from dashboard import show_dashboard_screen
 from client.client import STMPClient
 
+import logging
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
 class STMPGuiController:
     def __init__(self, root):
         self.root = root

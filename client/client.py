@@ -5,6 +5,7 @@ from client.network.connection import ConnectionManager
 from client.network.protocol import MsgType, build_frame, extract_request_id
 from client.network.session_manager import STMPSessionManager, SessionState
 from client.api.task_api import TaskAPI
+from shared.error_codes import ERROR_CODES
 
 logger = logging.getLogger("client")
 
@@ -98,17 +99,24 @@ class STMPClient(TaskAPI):
 
         return response
 
+    # Pobranie tekstu na podstawie kodu błędu
+    def _resolve_error(self, resp: dict, fallback: str) -> str:
+        payload = resp.get("payload", {})
+        error_code = payload.get("error_code")
+        if error_code in ERROR_CODES:
+            return f"{ERROR_CODES[error_code]}: {payload.get('message', fallback)}"
+        return payload.get("message", fallback)
+
     # Obsługa logowania użytkownika
     async def login(self, username: str, password: str) -> dict:
         try:
-            resp = await self.request(MsgType.HELLO,
-                                      {"message": "Login intent"})  # Upewnienie się o stanie HELLO
+            await self.request(MsgType.HELLO, {"message": "Login intent"})
             resp = await self.request("LOGIN", {"username": username, "password": password})
             if resp.get("type") == "LOGIN_OK":
                 return {"success": True, "username": username}
 
-            payload = resp.get("payload", {})
-            return {"success": False, "message": payload.get("message", "Login failed.")}
+            # Mapowanie błędów autentykacji
+            return {"success": False, "message": self._resolve_error(resp, "Login failed.")}
         except Exception as e:
             return {"success": False, "message": f"Network error: {str(e)}"}
 
@@ -119,8 +127,8 @@ class STMPClient(TaskAPI):
             if resp.get("type") == "REGISTER_OK":
                 return {"success": True}
 
-            payload = resp.get("payload", {})
-            return {"success": False, "message": payload.get("message", "Registration failed.")}
+            # Mapowanie błędów rejestracji
+            return {"success": False, "message": self._resolve_error(resp, "Registration failed.")}
         except Exception as e:
             return {"success": False, "message": f"Network error: {str(e)}"}
 
@@ -135,8 +143,8 @@ class STMPClient(TaskAPI):
             if resp.get("type") == "LOGIN_OK":
                 return {"success": True}
 
-            payload = resp.get("payload", {})
-            return {"success": False, "message": payload.get("message", "Login failed.")}
+            # Mapowanie błędów reautentykacji
+            return {"success": False, "message": self._resolve_error(resp, "Login failed.")}
         except Exception as e:
             return {"success": False, "message": f"Network error: {str(e)}"}
 
@@ -148,8 +156,8 @@ class STMPClient(TaskAPI):
                 tasks = resp.get("payload", {}).get("tasks", [])
                 return {"success": True, "tasks": tasks}
 
-            msg = resp.get("payload", {}).get("message", "Failed to fetch tasks.")
-            return {"success": False, "message": msg}
+            # Mapowanie błędów pobierania zasobów
+            return {"success": False, "message": self._resolve_error(resp, "Failed to fetch tasks.")}
         except Exception as e:
             return {"success": False, "message": f"Application error: {str(e)}"}
 

@@ -3,11 +3,15 @@ import logging
 import ssl
 
 from .protocol import MsgType, parse_frame
+from shared.error_codes import ERROR_CODES
 
 logger = logging.getLogger("connection")
 
-KEEP_ALIVE_IDLE_SECONDS = 30.0   # czas bezczynności przed wysłaniem PING
-MAX_PING_FAILURES       = 2      # ile nieudanych PINGów kończy połączenie
+KEEP_ALIVE_IDLE_SECONDS = 5.0
+MAX_PING_FAILURES       = 2
+
+REQUEST_TIMEOUT_SECONDS = 5.0
+MAX_RETRY_ATTEMPTS      = 3
 
 
 class ConnectionManager:
@@ -20,6 +24,8 @@ class ConnectionManager:
         self._listen_task:      asyncio.Task | None = None
         self._ping_task:        asyncio.Task | None = None
         self._last_activity_time: float = 0.0
+
+        self._duplicate_ids: set[str] = set()
 
         self.on_unexpected_disconnect = None
 
@@ -39,41 +45,98 @@ class ConnectionManager:
         except RuntimeError:
             pass
 
-    # Wysyłanie ramki i rejestracja Future
+    # Wysyłanie ramki z obsługą retry oraz poprawnej retransmisji duplikatów
     async def send_frame(self, frame_bytes: bytes, request_id: str, timeout: float) -> dict:
         if not self.is_connected:
             raise ConnectionError("Brak połączenia z serwerem.")
 
-        loop  = asyncio.get_event_loop()
-        future = loop.create_future()
-        self._pending_requests[request_id] = future
+        last_exception: Exception | None = None
+        attempt = 1
 
-        try:
-            self.writer.write(frame_bytes)
-            await self.writer.drain()
-            self.update_activity()
-            return await asyncio.wait_for(future, timeout=timeout)
-        except asyncio.TimeoutError:
-            raise asyncio.TimeoutError(f"Żądanie {request_id} przekroczyło limit czasu.")
-        finally:
-            self._pending_requests.pop(request_id, None)
+        while attempt <= MAX_RETRY_ATTEMPTS:
+            if not self.is_connected:
+                raise ConnectionError("Połączenie zerwane podczas ponowienia żądania.")
 
-    # Pętla odbioru ramek
+            loop = asyncio.get_event_loop()
+            future = loop.create_future()
+            self._pending_requests[request_id] = future
+
+            try:
+                if request_id not in self._duplicate_ids:
+                    self.writer.write(frame_bytes)
+                    await self.writer.drain()
+
+                response = await asyncio.wait_for(future, timeout=timeout)
+
+                # Obsługa 301 DUPLICATE_REQUEST
+                error_code = response.get("payload", {}).get("error_code")
+                if (response.get("type") == MsgType.ERROR
+                        and ERROR_CODES.get(error_code) == "DUPLICATE_REQUEST"):
+                    logger.warning(
+                        "Attempt %d/%d: 301 DUPLICATE_REQUEST dla %s — serwer przetwarza, czekam ponownie.",
+                        attempt, MAX_RETRY_ATTEMPTS, request_id,
+                    )
+                    self._duplicate_ids.add(request_id)
+                    last_exception = RuntimeError("301 DUPLICATE_REQUEST")
+
+                    # Serwer ma jeszcze jedną szansę na dokończenie operacji
+                    attempt += 1
+                    continue
+
+                # Jeśli doszło do udanej transakcji = czyszczenie flagi duplikatu
+                self._duplicate_ids.discard(request_id)
+                return response
+
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Attempt %d/%d: timeout żądania %s (%.1f s).",
+                    attempt, MAX_RETRY_ATTEMPTS, request_id, timeout,
+                )
+                last_exception = asyncio.TimeoutError(
+                    f"Żądanie {request_id} przekroczyło limit czasu."
+                )
+                self._duplicate_ids.discard(request_id)
+
+                attempt += 1
+                if attempt <= MAX_RETRY_ATTEMPTS:
+                    await asyncio.sleep(0.5 * attempt)  # Krótki liniowy backoff przed retransmisją
+            finally:
+                self._pending_requests.pop(request_id, None)
+
+        self._duplicate_ids.discard(request_id)
+        raise last_exception or asyncio.TimeoutError(
+            f"Żądanie {request_id} wyczerpało {MAX_RETRY_ATTEMPTS} próby."
+        )
+
+    # Uruchomienie pętli odbioru ramek
     async def start_listen_loop(self):
         self._listen_task = asyncio.create_task(self._listen_loop())
 
+    # Pętla odbioru ramek z uwzględnieniem Timeoutu Składania Wiadomości
     async def _listen_loop(self):
+        MESSAGE_ASSEMBLY_TIMEOUT = 5.0  # Max czas na dosłanie reszty wiadomości po nagłówku
         try:
             while self.is_connected:
+                # Oczekiwanie na nagłówek długości (4 bajty)
                 size_header = await self.reader.readexactly(4)
-                msg_size    = int.from_bytes(size_header, byteorder="big")
-                json_bytes  = await self.reader.readexactly(msg_size)
+                msg_size = int.from_bytes(size_header, byteorder="big")
+
+                # Timeout składania wiadomości
+                try:
+                    json_bytes = await asyncio.wait_for(
+                        self.reader.readexactly(msg_size),
+                        timeout=MESSAGE_ASSEMBLY_TIMEOUT
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(
+                        "Timeout składania wiadomości: niepełna rama danych od serwera. Zrywam połączenie.")
+                    break
 
                 response = parse_frame(json_bytes)
-                self.update_activity()
 
-                # PONG obsługujemy tutaj — nie trafia do czekających Future
-                if response.get("type") == MsgType.PONG:
+                if response.get("type") != MsgType.PONG:
+                    self.update_activity()
+                else:
                     continue
 
                 req_id = response.get("request_id")
@@ -92,15 +155,13 @@ class ConnectionManager:
                 if self.on_unexpected_disconnect:
                     asyncio.create_task(self.on_unexpected_disconnect())
 
-    # Pętla keep-alive (PING co 30 s bezczynności)
+    # PING po KEEP_ALIVE_IDLE_SECONDS bezczynności;
     async def start_keep_alive_loop(self, ping_callback):
-        self._ping_task = asyncio.create_task(
-            self._keep_alive_loop(ping_callback)
-        )
+        self._ping_task = asyncio.create_task(self._keep_alive_loop(ping_callback))
 
     async def _keep_alive_loop(self, ping_callback):
-        loop               = asyncio.get_event_loop()
-        consecutive_fails  = 0
+        loop              = asyncio.get_event_loop()
+        consecutive_fails = 0
 
         try:
             while self.is_connected:
@@ -108,15 +169,24 @@ class ConnectionManager:
 
                 idle = loop.time() - self._last_activity_time
                 if idle < KEEP_ALIVE_IDLE_SECONDS:
+                    consecutive_fails = 0  # aktywność = reset licznika
                     continue
 
                 try:
                     await ping_callback()
                     consecutive_fails = 0
-                except Exception:
+                    logger.debug("Keep-alive: PING OK.")
+                except Exception as e:
                     consecutive_fails += 1
+                    logger.warning(
+                        "Keep-alive: PING nieudany (%d/%d): %s",
+                        consecutive_fails, MAX_PING_FAILURES, e,
+                    )
                     if consecutive_fails >= MAX_PING_FAILURES:
-                        logger.error("Keep-alive: %d kolejne PING bez odpowiedzi — zrywam.", MAX_PING_FAILURES)
+                        logger.error(
+                            "Keep-alive: %d kolejne PING bez odpowiedzi — zrywam połączenie.",
+                            MAX_PING_FAILURES,
+                        )
                         break
 
         except asyncio.CancelledError:

@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import messagebox, ttk
 from auth_utils import COLOR_PRIMARY, COLOR_ERROR, get_button_styles
+from client.actions.task_actions import create_task, update_task
 
 # Ogólne okno do CRUD zadań
 def show_task_dialog(root, coordinator, on_success, task_data=None):
@@ -23,8 +24,7 @@ def show_task_dialog(root, coordinator, on_success, task_data=None):
     dialog.resizable(False, False)
 
     # Nagłówek okna
-    title_label = tk.Label(dialog, text=form_title, font=("Segoe UI", 14, "bold"), fg=COLOR_PRIMARY)
-    title_label.pack(pady=(15, 10))
+    tk.Label(dialog, text=form_title, font=("Segoe UI", 14, "bold"), fg=COLOR_PRIMARY).pack(pady=(15, 10))
 
     # Tytuł zadania
     tk.Label(dialog, text="Task Title *:", font=("Segoe UI", 10), anchor="w").pack(padx=25, pady=(5, 2), fill="x")
@@ -47,7 +47,7 @@ def show_task_dialog(root, coordinator, on_success, task_data=None):
     error_label = tk.Label(dialog, text="", font=("Segoe UI", 9), fg=COLOR_ERROR, wraplength=350)
     error_label.pack()
 
-    # Wypełnianie pól danymi (dla edycja)
+    # Wypełnianie pól danymi (dla edycji)
     if is_edit_mode:
         title_entry.insert(0, task_data.get("title", ""))
         desc_text.insert("1.0", task_data.get("description", ""))
@@ -58,41 +58,29 @@ def show_task_dialog(root, coordinator, on_success, task_data=None):
         description = desc_text.get("1.0", "end").strip()
         status = status_combobox.get()
 
-        if not title:
-            error_label.config(text="Task title is required!")
-            return
-
-        # Wybór odpowiedniej metody z klienta
         if is_edit_mode:
-            task_id = task_data.get("id")
-            coroutine = coordinator.client.update_task(task_id, title, description, status)
+            result = update_task(coordinator, task_data.get("id"), title, description, status)
         else:
-            coroutine = coordinator.client.create_task(title, description, status)
+            result = create_task(coordinator, title, description, status)
 
-        future = coordinator.run_async(coroutine)
-
-        try:
-            # Klient zwraca już ujednolicony słownik z gotowym komunikatem
-            result = future.result(timeout=5.0)
-
-            if result["success"]:
-                messagebox.showinfo("Success", result["message"], parent=dialog)
-                dialog.destroy()
-                on_success()  # Odświeżenie widoku tabeli głównej
-            else:
-                error_label.config(text=result["message"])
-        except Exception as e:
-            error_label.config(text=f"Application error: {str(e)}")
+        if result["success"]:
+            messagebox.showinfo("Success", result["message"], parent=dialog)
+            dialog.destroy()
+            on_success()
+        else:
+            error_label.config(text=result["message"])
 
     # Przyciski
     button_frame = tk.Frame(dialog)
     button_frame.pack(pady=15, side="bottom")
     btn_styles = get_button_styles()
 
-    tk.Button(button_frame, text=submit_btn_text, command=handle_submit, **btn_styles).grid(row=0, column=0, padx=5,
-                                                                                            ipady=2)
+    tk.Button(button_frame, text=submit_btn_text, command=handle_submit, **btn_styles).grid(
+        row=0, column=0, padx=5, ipady=2
+    )
 
     btn_styles_cancel = btn_styles.copy()
     btn_styles_cancel.update({"bg": "#7f8c8d", "activebackground": "#95a5a6"})
-    tk.Button(button_frame, text="Cancel", command=dialog.destroy, **btn_styles_cancel).grid(row=0, column=1, padx=5,
-                                                                                             ipady=2)
+    tk.Button(button_frame, text="Cancel", command=dialog.destroy, **btn_styles_cancel).grid(
+        row=0, column=1, padx=5, ipady=2
+    )

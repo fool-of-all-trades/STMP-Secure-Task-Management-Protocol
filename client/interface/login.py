@@ -1,5 +1,6 @@
 from tkinter import messagebox
-from auth_utils import create_auth_base_form, run_common_validation
+from auth_utils import create_auth_base_form
+from client.actions.auth_actions import perform_login
 
 # Ekran logowania
 def show_login_screen(root, coordinator, on_success, on_navigate_register, on_back):
@@ -7,26 +8,13 @@ def show_login_screen(root, coordinator, on_success, on_navigate_register, on_ba
         username = username_entry.get().strip()
         password = password_entry.get()
 
-        if not run_common_validation(username, password, message_label):
-            return
+        result = perform_login(coordinator, username, password)
 
-        # GUI -> STMP Client -> TLS -> Server
-        future = coordinator.run_async(
-            coordinator.client.request("LOGIN", {"username": username, "password": password})
-        )
-
-        try:
-            # Max 5 sekund na odpowiedź, bez blokowania pętli asyncio tła
-            response = future.result(timeout=5.0)
-
-            if response.get("type") == "LOGIN_OK":
-                messagebox.showinfo("Success", f"Logged in successfully as: {username}")
-                on_success(username)
-            else:
-                payload = response.get("payload", {})
-                message_label.config(text=payload.get("message", "Login failed."))
-        except Exception as e:
-            message_label.config(text=f"Network error: {str(e)}")
+        if result["success"]:
+            messagebox.showinfo("Success", f"Logged in successfully as: {username}")
+            on_success(username)
+        else:
+            message_label.config(text=result["message"])
 
     # Budowanie formularza logowania
     username_entry, password_entry, message_label, _ = create_auth_base_form(

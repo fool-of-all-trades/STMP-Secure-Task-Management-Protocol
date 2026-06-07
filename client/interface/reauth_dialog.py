@@ -1,13 +1,14 @@
 import tkinter as tk
 from tkinter import messagebox
 from auth_utils import COLOR_PRIMARY, get_button_styles
+from client.actions.auth_actions import perform_reauth
 
 # Okno ponownego logowania
 def show_reauth_dialog(root, coordinator, username, on_success, on_logout):
     dialog = tk.Toplevel(root)
     dialog.title("Session lost — re-authenticate")
     dialog.resizable(False, False)
-    dialog.grab_set()           # Blokada interakcji z głównym oknem
+    dialog.grab_set()
     dialog.protocol("WM_DELETE_WINDOW", lambda: None)  # Zakaz zamknięcia przez X
 
     # Wyśrodkowanie dialogu nad głównym oknem
@@ -47,44 +48,20 @@ def show_reauth_dialog(root, coordinator, username, on_success, on_logout):
     # Przyciski
     btn_frame = tk.Frame(body)
     btn_frame.pack(fill="x", pady=(12, 0))
-
     btn_styles = get_button_styles()
 
     def handle_relogin():
-        password = password_entry.get()
-        if not password:
-            message_label.config(text="Password cannot be empty.")
-            return
-
         message_label.config(text="Connecting...")
         dialog.update_idletasks()
 
-        # Najpierw nowe połączenie TCP/TLS (klient był rozłączony)
-        connect_future = coordinator.run_async(coordinator.client.connect())
-        try:
-            connected = connect_future.result(timeout=6.0)
-            if not connected:
-                message_label.config(text="Could not reconnect to server.")
-                return
-        except Exception as e:
-            message_label.config(text=f"Network error: {e}")
-            return
+        result = perform_reauth(coordinator, username, password_entry.get())
 
-        # Logowanie
-        login_future = coordinator.run_async(
-            coordinator.client.request("LOGIN", {"username": username, "password": password})
-        )
-        try:
-            response = login_future.result(timeout=5.0)
-            if response.get("type") == "LOGIN_OK":
-                dialog.grab_release()
-                dialog.destroy()
-                on_success()
-            else:
-                payload = response.get("payload", {})
-                message_label.config(text=payload.get("message", "Login failed."))
-        except Exception as e:
-            message_label.config(text=f"Network error: {e}")
+        if result["success"]:
+            dialog.grab_release()
+            dialog.destroy()
+            on_success()
+        else:
+            message_label.config(text=result["message"])
 
     def handle_logout():
         if messagebox.askyesno("Logout", "Give up and log out?", parent=dialog):

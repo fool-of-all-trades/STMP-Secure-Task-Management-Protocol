@@ -1,4 +1,3 @@
-import re
 import tkinter as tk
 
 COLOR_PRIMARY = "#1f4e79"
@@ -6,23 +5,6 @@ COLOR_PRIMARY_DARK = "#153552"
 COLOR_ERROR = "#d32f2f"
 COLOR_SUCCESS = "#388e3c"
 
-# Walidacja nazwy użytkownika
-def validate_username(username):
-    if len(username) < 3:
-        return False, "Username must be at least 3 characters long."
-    if len(username) > 30:
-        return False, "Username cannot be longer than 30 characters."
-    if not re.match("^[a-zA-Z0-9_]+$", username):
-        return False, "Username can only contain letters, numbers, and underscores."
-    return True, ""
-
-# Walidacja hasła
-def validate_password(password):
-    if len(password) < 8:
-        return False, "Password must be at least 8 characters long."
-    if len(password) > 128:
-        return False, "Password cannot be longer than 128 characters."
-    return True, ""
 
 # Styl ogólny dla przycisków
 def get_button_styles():
@@ -37,20 +19,22 @@ def get_button_styles():
         "bd": 0
     }
 
+
 # Przygotowanie okna aplikacji
 def prepare_screen(root, width, height, title):
     for widget in root.winfo_children():
         widget.destroy()
-        
+
     root.title(title)
     root.resizable(False, False)
-    
+
     screen_width = root.winfo_screenwidth()
     screen_height = root.winfo_screenheight()
     x = (screen_width // 2) - (width // 2)
     y = (screen_height // 2) - (height // 2)
-    
+
     root.geometry(f"{width}x{height}+{x}+{y}")
+
 
 # Formularz uwierzytelniania
 def create_auth_base_form(root, width, height, window_title, form_title, main_btn_text, on_main_action, on_back,
@@ -98,22 +82,3 @@ def create_auth_base_form(root, width, height, window_title, form_title, main_bt
     link.bind("<Button-1>", lambda e: on_nav_click())
 
     return username_entry, password_entry, message_label, extra_fields_frame
-
-
-# Walidacja danych wejściowych
-def run_common_validation(username, password, message_label):
-    if not username or not password:
-        message_label.config(text="Please fill in all fields!")
-        return False
-
-    is_valid, msg = validate_username(username)
-    if not is_valid:
-        message_label.config(text=msg)
-        return False
-
-    is_valid, msg = validate_password(password)
-    if not is_valid:
-        message_label.config(text=msg)
-        return False
-
-    return True

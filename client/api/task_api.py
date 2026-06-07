@@ -1,6 +1,6 @@
 import logging
 
-from .protocol import MsgType
+from client.network.protocol import MsgType
 
 logger = logging.getLogger("task_api")
 

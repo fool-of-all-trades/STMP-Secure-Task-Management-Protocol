@@ -1,10 +1,10 @@
 import asyncio
 import logging
 
-from .connection import ConnectionManager
-from .protocol import MsgType, build_frame, extract_request_id
-from .session_manager import STMPSessionManager, SessionState
-from .task_api import TaskAPI
+from client.network.connection import ConnectionManager
+from client.network.protocol import MsgType, build_frame, extract_request_id
+from client.network.session_manager import STMPSessionManager, SessionState
+from client.api.task_api import TaskAPI
 
 logger = logging.getLogger("client")
 

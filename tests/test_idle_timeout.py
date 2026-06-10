@@ -80,7 +80,7 @@ class TestIdleTimeout:
             resp = read_frame(tls)
             assert resp["type"] in ("PONG", "ERROR")
 
-    @pytest.mark.slow
+
     def test_idle_client_gets_disconnected(self):
         """
         Klient ktory nic nie wysyla przez IDLE_TIMEOUT sekund

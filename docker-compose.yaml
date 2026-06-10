@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: stmp_postgres
+    environment:
+      POSTGRES_USER: stmp_user
+      POSTGRES_PASSWORD: stmp_pass
+      POSTGRES_DB: stmp_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./server/db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+
+
+#Testowanie bazy:
+#1. docker exec -it stmp_postgres psql -U stmp_user -d stmp_db
+#2. SELECT id, username, password_hash, failed_login_count, locked_until FROM users;

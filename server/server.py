@@ -5,6 +5,7 @@ from pathlib import Path
 
 from server.protocol.parser import parse_message, build_response
 from server.protocol.router import dispatch, ConnectionState
+from server.services.session_service import mark_session_as_disconnected
 
 # konfiguracja ================================================================
 
@@ -14,7 +15,7 @@ PORT = 8888
 MAX_CONNECTIONS = 100
 MAX_CONNECTIONS_PER_IP = 5
 
-READ_TIMEOUT = 60
+IDLE_TIMEOUT = 60
 PING_INTERVAL = 30
 
 _BASE = Path(__file__).parent
@@ -113,10 +114,21 @@ async def _client_loop(
         try:
             parse_result = await asyncio.wait_for(
                 parse_message(reader),
-                timeout=READ_TIMEOUT,
+                timeout=IDLE_TIMEOUT,
             )
         except asyncio.TimeoutError:
-            logger.info("Timeout klienta %s – zamykam polaczenie", ip)
+            logger.info(
+                "Klient %s nieaktywny przez %ds – zamykam polaczenie",
+                ip, IDLE_TIMEOUT,
+            )
+            if session_token:
+                try:
+                    mark_session_as_disconnected(session_token)
+                    logger.info("Sesja %s oznaczona jako DISCONNECTED", ip)
+                except Exception as exc:
+                    logger.warning("Nie udalo sie oznaczyc sesji jako rozlaczonej: %s", exc)
+ 
+            state = ConnectionState.DISCONNECTED
             break
         except asyncio.IncompleteReadError:
             logger.info("Klient %s rozlaczyl sie", ip)

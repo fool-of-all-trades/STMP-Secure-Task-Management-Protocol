@@ -29,6 +29,13 @@ def _log_session_event(
     log_auth_event(conn, None, user_id, resolved_ip, event_type, success, error_code)
 
 
+def _session_ip_mismatch(session: dict, client_ip: str | None) -> bool:
+    stored_ip = session.get("client_ip")
+    if stored_ip is None:
+        return False
+    return client_ip is None or str(stored_ip) != client_ip
+
+
 def validate_session(session_token: str, client_ip: str | None = None) -> dict:
     if not session_token:
         with get_connection() as conn:
@@ -57,15 +64,11 @@ def validate_session(session_token: str, client_ip: str | None = None) -> dict:
                 return {"ok": False, "error_code": 202, "message": "Session expired"}
 
             # Tutaj będzie token powiązany z IP ale na razie dla testów zostawiamy to wyłączone
-            #
-            # if (
-            #     client_ip is not None
-            #     and session["client_ip"] is not None
-            #     and str(session["client_ip"]) != client_ip
-            # ):
-            #     _log_session_event(conn, session, client_ip, "SESSION_VALIDATE", False, 202)
-            #     conn.commit()
-            #     return {"ok": False, "error_code": 202, "message": "Session expired"}
+            # Active check: reject token use from any IP other than the login IP.
+            if _session_ip_mismatch(session, client_ip):
+                _log_session_event(conn, session, client_ip, "SESSION_VALIDATE", False, 202)
+                conn.commit()
+                return {"ok": False, "error_code": 202, "message": "Session expired"}
 
             touch_session(conn, session["id"], now)
             _log_session_event(conn, session, client_ip, "SESSION_VALIDATE", True, None)
@@ -161,15 +164,11 @@ def resume_session(session_token: str, client_ip: str | None = None) -> dict:
                 return {"ok": False, "error_code": 202, "message": "Session expired"}
 
             # I znowu powiązanie tokena z IP
-            #
-            # if (
-            #     client_ip is not None
-            #     and session["client_ip"] is not None
-            #     and str(session["client_ip"]) != client_ip
-            # ):
-            #     _log_session_event(conn, session, client_ip, "SESSION_RESUME", False, 202)
-            #     conn.commit()
-            #     return {"ok": False, "error_code": 202, "message": "Session expired"}
+            # Active check: reject resume from any IP other than the login IP.
+            if _session_ip_mismatch(session, client_ip):
+                _log_session_event(conn, session, client_ip, "SESSION_RESUME", False, 202)
+                conn.commit()
+                return {"ok": False, "error_code": 202, "message": "Session expired"}
 
             resume_session_record(conn, session["id"], client_ip, now)
             _log_session_event(conn, session, client_ip, "SESSION_RESUME", True, None)

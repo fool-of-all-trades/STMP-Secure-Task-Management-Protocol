@@ -28,8 +28,14 @@ def _validate_task_fields(title: str, description: str, status: str) -> dict | N
     return None
 
 
-def create_task(session_token: str, title: str, description: str = "", status: str = "todo") -> dict:
-    session_result = validate_session(session_token)
+def create_task(
+    session_token: str,
+    title: str,
+    description: str = "",
+    status: str = "todo",
+    client_ip: str | None = None,
+) -> dict:
+    session_result = validate_session(session_token, client_ip)
     if not session_result["ok"]:
         return session_result
 
@@ -62,8 +68,8 @@ def create_task(session_token: str, title: str, description: str = "", status: s
             return {"ok": False, "error_code": 500, "message": "Internal error"}
 
 
-def list_tasks(session_token: str) -> dict:
-    session_result = validate_session(session_token)
+def list_tasks(session_token: str, client_ip: str | None = None) -> dict:
+    session_result = validate_session(session_token, client_ip)
     if not session_result["ok"]:
         return session_result
 
@@ -94,8 +100,15 @@ def list_tasks(session_token: str) -> dict:
             return {"ok": False, "error_code": 500, "message": "Internal error"}
 
 
-def update_task(session_token: str, task_id: str, title: str, description: str = "", status: str = "todo") -> dict:
-    session_result = validate_session(session_token)
+def update_task(
+    session_token: str,
+    task_id: str,
+    title: str,
+    description: str = "",
+    status: str = "todo",
+    client_ip: str | None = None,
+) -> dict:
+    session_result = validate_session(session_token, client_ip)
     if not session_result["ok"]:
         return session_result
 
@@ -136,8 +149,8 @@ def update_task(session_token: str, task_id: str, title: str, description: str =
             return {"ok": False, "error_code": 500, "message": "Internal error"}
 
 
-def delete_task(session_token: str, task_id: str) -> dict:
-    session_result = validate_session(session_token)
+def delete_task(session_token: str, task_id: str, client_ip: str | None = None) -> dict:
+    session_result = validate_session(session_token, client_ip)
     if not session_result["ok"]:
         return session_result
 

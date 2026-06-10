@@ -131,7 +131,7 @@ def handle_create_task(message: dict, state: ConnectionState, ip: str, session_t
     if not title:
         return _error(103, "Missing task title")
 
-    result = create_task(session_token, title, description, status)
+    result = create_task(session_token, title, description, status, ip)
     if not result["ok"]:
         return _error(result["error_code"], result["message"])
 
@@ -151,7 +151,7 @@ def handle_update_task(message: dict, state: ConnectionState, ip: str, session_t
     if not title:
         return _error(103, "Missing task title")
 
-    result = update_task(session_token, task_id, title, description, status)
+    result = update_task(session_token, task_id, title, description, status, ip)
     if not result["ok"]:
         return _error(result["error_code"], result["message"])
 
@@ -163,7 +163,7 @@ def handle_delete_task(message: dict, state: ConnectionState, ip: str, session_t
     if not task_id:
         return _error(103, "Missing task_id")
 
-    result = delete_task(session_token, task_id)
+    result = delete_task(session_token, task_id, ip)
     if not result["ok"]:
         return _error(result["error_code"], result["message"])
 
@@ -176,7 +176,7 @@ def handle_get_task(message: dict, state: ConnectionState, ip: str, session_toke
 
     if task_id:
         # pojedyncze zadanie
-        result = list_tasks(session_token)
+        result = list_tasks(session_token, ip)
         if not result["ok"]:
             return _error(result["error_code"], result["message"])
         tasks = [t for t in result["tasks"] if t["id"] == task_id]
@@ -184,7 +184,7 @@ def handle_get_task(message: dict, state: ConnectionState, ip: str, session_toke
             return _error(300, "Task not found")
         return _ok("TASK_DATA", {"task": tasks[0]})
     else:
-        result = list_tasks(session_token)
+        result = list_tasks(session_token, ip)
         if not result["ok"]:
             return _error(result["error_code"], result["message"])
         return _ok("TASK_LIST", {"tasks": result["tasks"]})

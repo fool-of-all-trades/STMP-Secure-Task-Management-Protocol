@@ -8,7 +8,7 @@ logger = logging.getLogger("parser")
 # konfiguracja
 SUPPORTED_VERSION = "1.0"
 MAX_MESSAGE_SIZE = 64 * 1024  # 64 KB
-FRAME_TIMEOUT = 10  # sekundy (było 3, na potrzeby testów zmieniam na 10)
+FRAME_TIMEOUT = 3
 
 REQUIRED_FIELDS = {"type", "version", "request_id", "timestamp", "payload"}
 

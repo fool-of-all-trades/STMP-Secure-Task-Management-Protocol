@@ -1,7 +1,7 @@
 import asyncio
 import logging
 
-from client.network.connection import ConnectionManager
+from client.network.connection import ConnectionManager, REQUEST_TIMEOUT_SECONDS
 from client.network.protocol import MsgType, build_frame, extract_request_id
 from client.network.session_manager import STMPSessionManager, SessionState
 from client.api.task_api import TaskAPI
@@ -75,7 +75,7 @@ class STMPClient(TaskAPI):
             return False
 
     # Główne żądanie sieciowe
-    async def request(self, msg_type: str, payload: dict, timeout: float = 5.0) -> dict:
+    async def request(self, msg_type: str, payload: dict, timeout: float = REQUEST_TIMEOUT_SECONDS) -> dict:
         # Weryfikacja IP przed wysłaniem (token powiązany jest z IP z chwili logowania)
         if (msg_type not in MsgType.NO_AUTH_REQUIRED
                 and self.session.state == SessionState.SESSION_ACTIVE

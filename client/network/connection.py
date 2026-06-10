@@ -7,11 +7,12 @@ from shared.error_codes import ERROR_CODES
 
 logger = logging.getLogger("connection")
 
-KEEP_ALIVE_IDLE_SECONDS = 5.0
+KEEP_ALIVE_IDLE_SECONDS = 30.0
 MAX_PING_FAILURES       = 2
 
 REQUEST_TIMEOUT_SECONDS = 5.0
 MAX_RETRY_ATTEMPTS      = 3
+MESSAGE_ASSEMBLY_TIMEOUT = 3.0
 
 
 class ConnectionManager:
@@ -114,7 +115,6 @@ class ConnectionManager:
 
     # Pętla odbioru ramek z uwzględnieniem Timeoutu Składania Wiadomości
     async def _listen_loop(self):
-        MESSAGE_ASSEMBLY_TIMEOUT = 5.0  # Max czas na dosłanie reszty wiadomości po nagłówku
         try:
             while self.is_connected:
                 # Oczekiwanie na nagłówek długości (4 bajty)

@@ -24,7 +24,8 @@ def mock_dedup():
     """Globalnie wylacza deduplication – nie wymaga polaczenia z DB."""
     with patch("server.protocol.router.register_request", return_value={"ok": True}):
         with patch("server.protocol.router.set_request_response_code", return_value={"ok": True}):
-            yield
+            with patch("server.protocol.router.check_rate_limit", return_value={"ok": True}):
+                yield
 
 
 class TestRouterStateValidation:
@@ -117,8 +118,7 @@ class TestTaskHandlersAndGuard:
     @pytest.fixture(autouse=True)
     def setup_guards(self):
         with patch("server.protocol.router.validate_message_timestamp", return_value={"ok": True}):
-            with patch("server.protocol.router.check_rate_limit", return_value={"ok": True}):
-                yield
+            yield
 
     @patch("server.protocol.router.create_task")
     def test_create_task_success(self, mock_create):

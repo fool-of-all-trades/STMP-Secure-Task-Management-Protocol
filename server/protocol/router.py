@@ -52,20 +52,6 @@ def _build_scope_key(session_token: str | None, ip: str) -> str:
         return f"session:{hash_token(session_token)}"
     return f"ip:{ip}"
 
-
-# wspolna walidacja dla wiadomosci wymagajacych sesji
-def _guard(message: dict, session_token: str, ip: str) -> dict | None:
-    """
-    Sprawdza rate limit.
-    Zwraca blad lub None jesli OK.
-    """
-    rl_result = check_rate_limit(_build_scope_key(session_token, ip))
-    if not rl_result["ok"]:
-        return rl_result
-
-    return None
-
-
 # handlery ====================================================================
 
 def handle_hello(message: dict, state: ConnectionState, ip: str, session_token: str | None):
@@ -137,10 +123,6 @@ def handle_bye(message: dict, state: ConnectionState, ip: str, session_token: st
 
 
 def handle_create_task(message: dict, state: ConnectionState, ip: str, session_token: str | None):
-    guard = _guard(message, session_token, ip)
-    if guard:
-        return _error(guard["error_code"], guard["message"])
-
     payload = message["payload"]
     title = payload.get("title", "")
     description = payload.get("description", "")
@@ -157,10 +139,6 @@ def handle_create_task(message: dict, state: ConnectionState, ip: str, session_t
 
 
 def handle_update_task(message: dict, state: ConnectionState, ip: str, session_token: str | None):
-    guard = _guard(message, session_token, ip)
-    if guard:
-        return _error(guard["error_code"], guard["message"])
-
     payload = message["payload"]
     task_id = payload.get("task_id", "")
     title = payload.get("title", "")
@@ -181,10 +159,6 @@ def handle_update_task(message: dict, state: ConnectionState, ip: str, session_t
 
 
 def handle_delete_task(message: dict, state: ConnectionState, ip: str, session_token: str | None):
-    guard = _guard(message, session_token, ip)
-    if guard:
-        return _error(guard["error_code"], guard["message"])
-
     task_id = message["payload"].get("task_id", "")
     if not task_id:
         return _error(103, "Missing task_id")
@@ -197,10 +171,6 @@ def handle_delete_task(message: dict, state: ConnectionState, ip: str, session_t
 
 
 def handle_get_task(message: dict, state: ConnectionState, ip: str, session_token: str | None):
-    guard = _guard(message, session_token, ip)
-    if guard:
-        return _error(guard["error_code"], guard["message"])
-
     # GET_TASK bez task_id zwraca liste wszystkich
     task_id = message["payload"].get("task_id")
 
@@ -265,6 +235,12 @@ def dispatch(
         return _error(ts_result["error_code"], ts_result["message"])
 
     skip_dedup = msg_type in {"PING", "HELLO"}
+    skip_rate_limit = msg_type in {"PING", "HELLO"}
+
+    if not skip_rate_limit:
+        rl_result = check_rate_limit(scope_key)
+        if not rl_result["ok"]:
+            return _error(rl_result["error_code"], rl_result["message"])
  
     # Obsluga duplikatow
     if not skip_dedup:

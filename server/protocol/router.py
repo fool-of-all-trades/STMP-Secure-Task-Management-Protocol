@@ -32,7 +32,7 @@ class ConnectionState(Enum):
 # wiadomosci dozwolone w kazdym stanie
 STATE_ALLOWED = {
     ConnectionState.CONNECTED:     {"HELLO"},
-    ConnectionState.AUTHENTICATED: {"LOGIN", "REGISTER"},
+    ConnectionState.AUTHENTICATED: {"LOGIN", "REGISTER", "RESUME_SESSION"},
     ConnectionState.ACTIVE:        {"CREATE_TASK", "UPDATE_TASK", "DELETE_TASK",
                                     "GET_TASK", "PING", "BYE", "RESUME_SESSION",
                                     "REFRESH_TOKEN"},
@@ -226,7 +226,7 @@ def dispatch(
         if state == ConnectionState.CONNECTED:
             return _error(101, f"Expected HELLO, got {msg_type}")
         elif state == ConnectionState.AUTHENTICATED:
-            return _error(101, f"Expected LOGIN or REGISTER, got {msg_type}")
+            return _error(101, f"Expected LOGIN, REGISTER or RESUME_SESSION, got {msg_type}")
         else:
             return _error(201, "Session required")
  

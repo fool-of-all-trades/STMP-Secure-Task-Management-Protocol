@@ -46,13 +46,17 @@ class TestRouterStateValidation:
         assert "Expected HELLO" in payload["message"]
         assert new_state is None
 
-    def test_rejects_tasks_in_authenticated_state(self):
+    def test_rejects_tasks_after_hello_before_login(self):
+        hello = make_msg("HELLO")
+        _, _, state_after_hello = dispatch(hello, ConnectionState.CONNECTED, IP, None)
+
         msg = make_msg("CREATE_TASK", {"title": "Test"})
-        resp_type, payload, new_state = dispatch(msg, ConnectionState.AUTHENTICATED, IP, None)
+        resp_type, payload, new_state = dispatch(msg, state_after_hello, IP, None)
 
         assert resp_type == "ERROR"
         assert payload["error_code"] == 101
-        assert "Expected LOGIN or REGISTER" in payload["message"]
+        assert "Expected LOGIN, REGISTER or RESUME_SESSION" in payload["message"]
+        assert new_state is None
 
     def test_rejects_unknown_command(self):
         msg = make_msg("MAGIC_COMMAND")
@@ -111,6 +115,51 @@ class TestAuthHandlers:
 
         assert resp_type == "ERROR"
         assert payload["error_code"] == 103
+
+
+class TestResumeSessionHandlers:
+
+    @patch("server.protocol.router.resume_session")
+    def test_resume_session_success_after_hello_sets_active_state(self, mock_resume):
+        mock_resume.return_value = {
+            "ok": True,
+            "session_id": "s-1",
+            "user_id": "u-1",
+            "message": "Session resumed",
+        }
+
+        hello = make_msg("HELLO")
+        hello_type, _, state_after_hello = dispatch(hello, ConnectionState.CONNECTED, IP, None)
+        assert hello_type == "HELLO_OK"
+        assert state_after_hello == ConnectionState.AUTHENTICATED
+
+        msg = make_msg("RESUME_SESSION", {"session_token": DUMMY_TOKEN})
+        resp_type, payload, new_state = dispatch(msg, state_after_hello, IP, None)
+
+        assert resp_type == "RESUME_SESSION_OK"
+        assert payload["message"] == "Session resumed"
+        assert new_state == ConnectionState.ACTIVE
+        mock_resume.assert_called_once_with(DUMMY_TOKEN, IP)
+
+    @patch("server.protocol.router.resume_session")
+    def test_resume_session_expired_after_hello_returns_202(self, mock_resume):
+        mock_resume.return_value = {
+            "ok": False,
+            "error_code": 202,
+            "message": "Session expired",
+        }
+
+        hello = make_msg("HELLO")
+        _, _, state_after_hello = dispatch(hello, ConnectionState.CONNECTED, IP, None)
+
+        msg = make_msg("RESUME_SESSION", {"session_token": DUMMY_TOKEN})
+        resp_type, payload, new_state = dispatch(msg, state_after_hello, IP, None)
+
+        assert resp_type == "ERROR"
+        assert payload["error_code"] == 202
+        assert payload["message"] == "Session expired"
+        assert new_state is None
+        mock_resume.assert_called_once_with(DUMMY_TOKEN, IP)
 
 
 class TestTaskHandlersAndGuard:

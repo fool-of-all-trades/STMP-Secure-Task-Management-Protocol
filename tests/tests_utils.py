@@ -4,6 +4,7 @@ from server.db.db import get_connection
 from server.security.security_utils import hash_token
 
 TEST_CLIENT_IP = "127.0.0.1"
+TEST_OTHER_CLIENT_IP = "127.0.0.2"
 TEST_PASSWORD = "TestPassword123!"
 
 

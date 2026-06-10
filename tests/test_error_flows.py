@@ -33,6 +33,7 @@ def test_create_task_with_empty_title(logged_in_user):
         title="",
         description="Should fail",
         status="todo",
+        client_ip=TEST_CLIENT_IP,
     )
 
     assert create_result["ok"] is False
@@ -46,6 +47,7 @@ def test_create_task_with_invalid_status(logged_in_user):
         title="Task with bad status",
         description="Should fail",
         status="in_progress",
+        client_ip=TEST_CLIENT_IP,
     )
 
     assert create_result["ok"] is False
@@ -62,6 +64,7 @@ def test_update_nonexistent_task(logged_in_user):
         title="Updated title",
         description="Updated description",
         status="done",
+        client_ip=TEST_CLIENT_IP,
     )
 
     assert update_result["ok"] is False
@@ -72,7 +75,7 @@ def test_update_nonexistent_task(logged_in_user):
 def test_delete_nonexistent_task(logged_in_user):
     fake_task_id = "00000000-0000-0000-0000-000000000000"
 
-    delete_result = delete_task(logged_in_user["session_token"], fake_task_id)
+    delete_result = delete_task(logged_in_user["session_token"], fake_task_id, TEST_CLIENT_IP)
 
     assert delete_result["ok"] is False
     assert delete_result["error_code"] == 300
@@ -100,6 +103,7 @@ def test_access_denied_on_other_users_task():
         title="Private task",
         description="Owned by user 1",
         status="todo",
+        client_ip=TEST_CLIENT_IP,
     )
     assert create_result["ok"] is True
 
@@ -111,12 +115,13 @@ def test_access_denied_on_other_users_task():
         title="Hacked task",
         description="Should not work",
         status="done",
+        client_ip=TEST_CLIENT_IP,
     )
 
     assert update_result["ok"] is False
     assert update_result["error_code"] == 203
 
-    delete_result = delete_task(session_token_2, task_id)
+    delete_result = delete_task(session_token_2, task_id, TEST_CLIENT_IP)
     assert delete_result["ok"] is False
     assert delete_result["error_code"] == 203
 

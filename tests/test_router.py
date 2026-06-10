@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from unittest.mock import patch, MagicMock
 import pytest
 
@@ -6,14 +7,13 @@ from server.protocol.router import dispatch, ConnectionState
 
 IP = "127.0.0.1"
 DUMMY_TOKEN = "session-token-123"
-TS = "2026-05-26T12:00:00Z"
 
 
 def make_msg(msg_type: str, payload: dict = None) -> dict:
     return {
         "type": msg_type,
         "version": "1.0",
-        "timestamp": TS,
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "request_id": "req-1",
         "payload": payload or {},
     }

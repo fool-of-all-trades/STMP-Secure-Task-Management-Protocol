@@ -56,13 +56,9 @@ def _build_scope_key(session_token: str | None, ip: str) -> str:
 # wspolna walidacja dla wiadomosci wymagajacych sesji
 def _guard(message: dict, session_token: str, ip: str) -> dict | None:
     """
-    Sprawdza timestamp i rate limit.
+    Sprawdza rate limit.
     Zwraca blad lub None jesli OK.
     """
-    ts_result = validate_message_timestamp(message["timestamp"])
-    if not ts_result["ok"]:
-        return ts_result
-
     rl_result = check_rate_limit(_build_scope_key(session_token, ip))
     if not rl_result["ok"]:
         return rl_result
@@ -264,6 +260,10 @@ def dispatch(
         else:
             return _error(201, "Session required")
  
+    ts_result = validate_message_timestamp(message["timestamp"])
+    if not ts_result["ok"]:
+        return _error(ts_result["error_code"], ts_result["message"])
+
     skip_dedup = msg_type in {"PING", "HELLO"}
  
     # Obsluga duplikatow

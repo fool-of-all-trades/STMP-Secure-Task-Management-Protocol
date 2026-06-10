@@ -72,6 +72,27 @@ def _unregister_connection(writer: asyncio.StreamWriter) -> None:
 
 # obsługa klienta =============================================================
 
+def _mark_session_disconnected_for_reconnect(
+    session_token: str | None,
+    state: ConnectionState,
+    graceful_close: bool,
+    ip: str,
+) -> dict | None:
+    if graceful_close or state != ConnectionState.ACTIVE or not session_token:
+        return None
+
+    result = mark_session_as_disconnected(session_token)
+    if result.get("ok"):
+        logger.info("Sesja klienta %s oznaczona jako DISCONNECTED", ip)
+    else:
+        logger.debug(
+            "Nie oznaczono sesji klienta %s jako DISCONNECTED: %s",
+            ip,
+            result.get("error_code"),
+        )
+    return result
+
+
 async def handle_client(
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
@@ -132,12 +153,15 @@ async def _client_loop(
             break
         except asyncio.IncompleteReadError:
             logger.info("Klient %s rozlaczyl sie", ip)
+            _mark_session_disconnected_for_reconnect(session_token, state, False, ip)
             break
         except OSError as exc:
             logger.debug("Polaczenie zerwane dla %s: %s", ip, exc)
+            _mark_session_disconnected_for_reconnect(session_token, state, False, ip)
             break
         except Exception as exc:
             logger.warning("Blad parsowania dla %s: %s", ip, exc)
+            _mark_session_disconnected_for_reconnect(session_token, state, False, ip)
             break
 
         # Blad parsowania – wyslij ERROR i czekaj na kolejna wiadomosc
@@ -149,6 +173,7 @@ async def _client_loop(
                 writer.write(build_response("ERROR", {"error_code": error_code, "message": error_msg}))
                 await writer.drain()
             except Exception:
+                _mark_session_disconnected_for_reconnect(session_token, state, False, ip)
                 break
             continue
 
@@ -177,6 +202,7 @@ async def _client_loop(
             await writer.drain()
         except Exception as exc:
             logger.warning("Nie udalo sie wyslac odpowiedzi do %s: %s", ip, exc)
+            _mark_session_disconnected_for_reconnect(session_token, state, False, ip)
             break
 
         # Jesli BYE – zamknij polaczenie

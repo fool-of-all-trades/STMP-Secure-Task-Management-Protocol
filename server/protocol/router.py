@@ -18,6 +18,7 @@ from server.services.request_guard_service import (
     validate_message_timestamp,
     set_request_response_code,
 )
+from server.security.security_utils import hash_token
 
 
 # stany polaczenia
@@ -46,6 +47,12 @@ def _ok(response_type: str, payload: dict, new_state: ConnectionState | None = N
     return response_type, payload, new_state
 
 
+def _build_scope_key(session_token: str | None, ip: str) -> str:
+    if session_token:
+        return f"session:{hash_token(session_token)}"
+    return f"ip:{ip}"
+
+
 # wspolna walidacja dla wiadomosci wymagajacych sesji
 def _guard(message: dict, session_token: str, ip: str) -> dict | None:
     """
@@ -56,7 +63,7 @@ def _guard(message: dict, session_token: str, ip: str) -> dict | None:
     if not ts_result["ok"]:
         return ts_result
 
-    rl_result = check_rate_limit(session_token or ip)
+    rl_result = check_rate_limit(_build_scope_key(session_token, ip))
     if not rl_result["ok"]:
         return rl_result
 
@@ -245,7 +252,7 @@ def dispatch(
     """
     msg_type = message["type"]
     request_id = message["request_id"]
-    scope_key = session_token or ip
+    scope_key = _build_scope_key(session_token, ip)
  
     # Sprawdz stan
     allowed = STATE_ALLOWED.get(state, set())

@@ -6,6 +6,7 @@ from server.services.session_service import (
 )
 from tests.tests_utils import (
     TEST_CLIENT_IP,
+    TEST_OTHER_CLIENT_IP,
     expire_resume_window,
     expire_session_token,
     get_latest_auth_log_by_user_id,
@@ -30,6 +31,26 @@ def test_validate_session_success_writes_log(logged_in_user_with_clean_auth_logs
     assert log_entry["event_type"] == "SESSION_VALIDATE"
     assert log_entry["success"] is True
     assert log_entry["error_code"] is None
+
+
+def test_validate_session_changed_ip_writes_failed_log(logged_in_user_with_clean_auth_logs):
+    validate_result = validate_session(
+        logged_in_user_with_clean_auth_logs["session_token"],
+        TEST_OTHER_CLIENT_IP,
+    )
+    assert validate_result["ok"] is False
+    assert validate_result["error_code"] == 202
+
+    log_entry = get_latest_auth_log_by_user_id(
+        logged_in_user_with_clean_auth_logs["user_id"],
+        "SESSION_VALIDATE",
+    )
+    assert log_entry is not None
+    assert log_entry["user_id"] == logged_in_user_with_clean_auth_logs["user_id"]
+    assert log_entry["client_ip"] == TEST_OTHER_CLIENT_IP
+    assert log_entry["event_type"] == "SESSION_VALIDATE"
+    assert log_entry["success"] is False
+    assert log_entry["error_code"] == 202
 
 
 
@@ -92,6 +113,28 @@ def test_resume_session_success_writes_log(logged_in_user_with_clean_auth_logs):
     assert log_entry["event_type"] == "SESSION_RESUME"
     assert log_entry["success"] is True
     assert log_entry["error_code"] is None
+
+
+def test_resume_session_changed_ip_writes_failed_log(logged_in_user_with_clean_auth_logs):
+    session_token = logged_in_user_with_clean_auth_logs["session_token"]
+
+    disconnect_result = mark_session_as_disconnected(session_token)
+    assert disconnect_result["ok"] is True
+
+    resume_result = resume_session(session_token, TEST_OTHER_CLIENT_IP)
+    assert resume_result["ok"] is False
+    assert resume_result["error_code"] == 202
+
+    log_entry = get_latest_auth_log_by_user_id(
+        logged_in_user_with_clean_auth_logs["user_id"],
+        "SESSION_RESUME",
+    )
+    assert log_entry is not None
+    assert log_entry["user_id"] == logged_in_user_with_clean_auth_logs["user_id"]
+    assert log_entry["client_ip"] == TEST_OTHER_CLIENT_IP
+    assert log_entry["event_type"] == "SESSION_RESUME"
+    assert log_entry["success"] is False
+    assert log_entry["error_code"] == 202
 
 
 

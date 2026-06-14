@@ -1,4 +1,7 @@
+import logging
 from enum import Enum
+
+logger = logging.getLogger("router")
 
 from server.services.auth_service import login_user, logout_user, register_user
 from server.services.session_service import (
@@ -18,21 +21,20 @@ from server.services.request_guard_service import (
     validate_message_timestamp,
     set_request_response_code,
 )
-from server.security.security_utils import hash_token
 
 
 # stany polaczenia
 class ConnectionState(Enum):
     CONNECTED = "CONNECTED"          # TCP + TLS, przed HELLO
     AUTHENTICATED = "AUTHENTICATED"  # po HELLO, przed LOGIN
-    ACTIVE = "ACTIVE"                # zalogowany i aktywny
+    ACTIVE = "ACTIVE"                # zalogowany, moze robic operacje
     DISCONNECTED = "DISCONNECTED"    # rozlaczony
 
 
 # wiadomosci dozwolone w kazdym stanie
 STATE_ALLOWED = {
     ConnectionState.CONNECTED:     {"HELLO"},
-    ConnectionState.AUTHENTICATED: {"LOGIN", "REGISTER", "RESUME_SESSION"},
+    ConnectionState.AUTHENTICATED: {"LOGIN", "REGISTER"},
     ConnectionState.ACTIVE:        {"CREATE_TASK", "UPDATE_TASK", "DELETE_TASK",
                                     "GET_TASK", "PING", "BYE", "RESUME_SESSION",
                                     "REFRESH_TOKEN"},
@@ -47,10 +49,22 @@ def _ok(response_type: str, payload: dict, new_state: ConnectionState | None = N
     return response_type, payload, new_state
 
 
-def _build_scope_key(session_token: str | None, ip: str) -> str:
-    if session_token:
-        return f"session:{hash_token(session_token)}"
-    return f"ip:{ip}"
+# wspolna walidacja dla wiadomosci wymagajacych sesji
+def _guard(message: dict, session_token: str, ip: str) -> dict | None:
+    """
+    Sprawdza timestamp i rate limit.
+    Zwraca blad lub None jesli OK.
+    """
+    ts_result = validate_message_timestamp(message["timestamp"])
+    if not ts_result["ok"]:
+        return ts_result
+
+    rl_result = check_rate_limit(session_token or ip)
+    if not rl_result["ok"]:
+        return rl_result
+
+    return None
+
 
 # handlery ====================================================================
 
@@ -119,10 +133,15 @@ def handle_ping(message: dict, state: ConnectionState, ip: str, session_token: s
 def handle_bye(message: dict, state: ConnectionState, ip: str, session_token: str | None):
     if session_token:
         logout_user(session_token)
+        mark_session_as_disconnected(session_token)
     return _ok("BYE", {"message": "Goodbye"}, ConnectionState.DISCONNECTED)
 
 
 def handle_create_task(message: dict, state: ConnectionState, ip: str, session_token: str | None):
+    guard = _guard(message, session_token, ip)
+    if guard:
+        return _error(guard["error_code"], guard["message"])
+
     payload = message["payload"]
     title = payload.get("title", "")
     description = payload.get("description", "")
@@ -131,7 +150,7 @@ def handle_create_task(message: dict, state: ConnectionState, ip: str, session_t
     if not title:
         return _error(103, "Missing task title")
 
-    result = create_task(session_token, title, description, status, ip)
+    result = create_task(session_token, title, description, status)
     if not result["ok"]:
         return _error(result["error_code"], result["message"])
 
@@ -139,6 +158,10 @@ def handle_create_task(message: dict, state: ConnectionState, ip: str, session_t
 
 
 def handle_update_task(message: dict, state: ConnectionState, ip: str, session_token: str | None):
+    guard = _guard(message, session_token, ip)
+    if guard:
+        return _error(guard["error_code"], guard["message"])
+
     payload = message["payload"]
     task_id = payload.get("task_id", "")
     title = payload.get("title", "")
@@ -151,7 +174,7 @@ def handle_update_task(message: dict, state: ConnectionState, ip: str, session_t
     if not title:
         return _error(103, "Missing task title")
 
-    result = update_task(session_token, task_id, title, description, status, ip)
+    result = update_task(session_token, task_id, title, description, status)
     if not result["ok"]:
         return _error(result["error_code"], result["message"])
 
@@ -159,11 +182,15 @@ def handle_update_task(message: dict, state: ConnectionState, ip: str, session_t
 
 
 def handle_delete_task(message: dict, state: ConnectionState, ip: str, session_token: str | None):
+    guard = _guard(message, session_token, ip)
+    if guard:
+        return _error(guard["error_code"], guard["message"])
+
     task_id = message["payload"].get("task_id", "")
     if not task_id:
         return _error(103, "Missing task_id")
 
-    result = delete_task(session_token, task_id, ip)
+    result = delete_task(session_token, task_id)
     if not result["ok"]:
         return _error(result["error_code"], result["message"])
 
@@ -171,12 +198,16 @@ def handle_delete_task(message: dict, state: ConnectionState, ip: str, session_t
 
 
 def handle_get_task(message: dict, state: ConnectionState, ip: str, session_token: str | None):
+    guard = _guard(message, session_token, ip)
+    if guard:
+        return _error(guard["error_code"], guard["message"])
+
     # GET_TASK bez task_id zwraca liste wszystkich
     task_id = message["payload"].get("task_id")
 
     if task_id:
-        # pojedyncze zadanie
-        result = list_tasks(session_token, ip)
+        # pojedyncze zadanie - przez list + filter (task_service nie ma get_single)
+        result = list_tasks(session_token)
         if not result["ok"]:
             return _error(result["error_code"], result["message"])
         tasks = [t for t in result["tasks"] if t["id"] == task_id]
@@ -184,7 +215,7 @@ def handle_get_task(message: dict, state: ConnectionState, ip: str, session_toke
             return _error(300, "Task not found")
         return _ok("TASK_DATA", {"task": tasks[0]})
     else:
-        result = list_tasks(session_token, ip)
+        result = list_tasks(session_token)
         if not result["ok"]:
             return _error(result["error_code"], result["message"])
         return _ok("TASK_LIST", {"tasks": result["tasks"]})
@@ -218,52 +249,54 @@ def dispatch(
     """
     msg_type = message["type"]
     request_id = message["request_id"]
-    scope_key = _build_scope_key(session_token, ip)
- 
+    scope_key = session_token or ip
+
     # Sprawdz stan
     allowed = STATE_ALLOWED.get(state, set())
     if msg_type not in allowed:
         if state == ConnectionState.CONNECTED:
             return _error(101, f"Expected HELLO, got {msg_type}")
         elif state == ConnectionState.AUTHENTICATED:
-            return _error(101, f"Expected LOGIN, REGISTER or RESUME_SESSION, got {msg_type}")
+            return _error(101, f"Expected LOGIN or REGISTER, got {msg_type}")
         else:
             return _error(201, "Session required")
- 
-    ts_result = validate_message_timestamp(message["timestamp"])
-    if not ts_result["ok"]:
-        return _error(ts_result["error_code"], ts_result["message"])
 
+    # PING i HELLO nie wymagaja ochrony przed duplikatami
     skip_dedup = msg_type in {"PING", "HELLO"}
-    skip_rate_limit = msg_type in {"PING", "HELLO"}
 
-    if not skip_rate_limit:
-        rl_result = check_rate_limit(scope_key)
-        if not rl_result["ok"]:
-            return _error(rl_result["error_code"], rl_result["message"])
- 
-    # Obsluga duplikatow
     if not skip_dedup:
-        dedup_result = register_request(
-            scope_key=scope_key,
-            request_id=request_id,
-            message_type=msg_type,
-            payload=message["payload"],
-        )
+        try:
+            dedup_result = register_request(
+                scope_key=scope_key,
+                request_id=request_id,
+                message_type=msg_type,
+                payload=message["payload"],
+            )
+        except Exception:
+            logger.error("Blad bazy danych podczas register_request (typ=%s)", msg_type)
+            return _error(500, "Internal error")
+
         if not dedup_result["ok"]:
             if dedup_result["error_code"] == 301:
                 return _error(301, "Duplicate request")
             return _error(dedup_result["error_code"], dedup_result["message"])
- 
+
     handler = HANDLERS.get(msg_type)
     if not handler:
         return _error(101, f"Unknown message type: {msg_type}")
- 
-    response_type, payload, new_state = handler(message, state, ip, session_token)
- 
+
+    try:
+        response_type, payload, new_state = handler(message, state, ip, session_token)
+    except Exception:
+        logger.error("Blad bazy danych w handlerze %s", msg_type)
+        return _error(500, "Internal error")
+
     # Zapisz kod odpowiedzi w historii
     if not skip_dedup:
-        response_code = 0 if response_type != "ERROR" else payload.get("error_code", 500)
-        set_request_response_code(scope_key, request_id, response_code)
- 
+        try:
+            response_code = 0 if response_type != "ERROR" else payload.get("error_code", 500)
+            set_request_response_code(scope_key, request_id, response_code)
+        except Exception:
+            logger.error("Blad bazy danych podczas set_request_response_code (typ=%s)", msg_type)
+
     return response_type, payload, new_state

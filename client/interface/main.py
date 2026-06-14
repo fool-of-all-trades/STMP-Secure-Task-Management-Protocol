@@ -5,6 +5,9 @@ from tkinter import messagebox
 import argparse
 import os
 
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
 from welcome import show_welcome_screen
 from login import show_login_screen
 from registration import show_registration_screen

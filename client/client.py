@@ -11,9 +11,10 @@ logger = logging.getLogger("client")
 
 
 class STMPClient(TaskAPI):
-    def __init__(self, host: str = "127.0.0.1", port: int = 8888):
+    def __init__(self, host: str = "127.0.0.1", port: int = 8888, local_host: str | None = None):
         self.host = host
         self.port = port
+        self.local_host = local_host  # Lokalny interfejs sieciowy do bindowania
 
         self.connection = ConnectionManager()
         self.session = STMPSessionManager(self)
@@ -49,8 +50,11 @@ class STMPClient(TaskAPI):
 
         try:
             ctx = ConnectionManager.create_ssl_context()
+            # Jeśli podano local_host to bindujemy gniazdo do konkretnego interfejsu sieciowego
+            # aby serwer widział inne IP źródłowe dla każdego klienta
+            local_addr = (self.local_host, 0) if self.local_host else None
             self.connection.reader, self.connection.writer = (
-                await asyncio.open_connection(self.host, self.port, ssl=ctx)
+                await asyncio.open_connection(self.host, self.port, ssl=ctx, local_addr=local_addr)
             )
             self.is_connected = True
             self.connection.update_activity()

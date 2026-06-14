@@ -2,6 +2,8 @@ import tkinter as tk
 import asyncio
 import threading
 from tkinter import messagebox
+import argparse
+import os
 
 from welcome import show_welcome_screen
 from login import show_login_screen
@@ -11,21 +13,37 @@ from client.client import STMPClient
 
 import logging
 
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 
+# Parsowanie argumentów i zmiennych środowiskowych
+def parse_args():
+    p = argparse.ArgumentParser(description="Klient STMP")
+    p.add_argument("--host",       default=os.environ.get("STMP_HOST", "127.0.0.1"))
+    p.add_argument("--port",       default=int(os.environ.get("STMP_PORT", "8888")), type=int)
+    p.add_argument("--label",      default=os.environ.get("STMP_LABEL", "Klient"),
+                   help="Etykieta wyświetlana w tytule okna i logach")
+    p.add_argument("--local-host", default=os.environ.get("STMP_LOCAL_HOST", None),
+                   dest="local_host",
+                   help="Lokalny interfejs sieciowy do bindowania (np. 192.168.1.5). "
+                        "Domyślnie: system wybiera automatycznie.")
+    return p.parse_args()
+
+
+# Kontroler GUI
 class STMPGuiController:
-    def __init__(self, root):
-        self.root = root
-        self.client = STMPClient(host="127.0.0.1", port=8888)
+    def __init__(self, root: tk.Tk, host: str, port: int, label: str, local_host: str | None = None):
+        self.root  = root
+        self.label = label
+        self.client = STMPClient(host=host, port=port, local_host=local_host)
+        self._host       = host
+        self._port       = port
+        self._local_host = local_host
         self.current_username = None
 
-        # Osobna pętlaa asyncio dla wątku tła
+        # Osobna pętla asyncio dla wątku tła
         self.async_loop = asyncio.new_event_loop()
-        self.network_thread = threading.Thread(target=self._run_async_loop, daemon=True)
+        self.network_thread = threading.Thread(
+            target=self._run_async_loop, daemon=True, name=f"{label}-network"
+        )
         self.network_thread.start()
 
     # Uruchomienie pętli asyncio w osobnym wątku
@@ -67,20 +85,20 @@ class STMPGuiController:
     def navigate_to_login(self):
         show_login_screen(
             self.root,
-            self,  # Przekazujemy kontroler (żeby ekrany mogły używać run_async)
+            self,
             on_success=self.handle_authenticated_session,
             on_navigate_register=self.navigate_to_registration,
-            on_back=self.navigate_to_welcome
+            on_back=self.navigate_to_welcome,
         )
 
     # Przenisienie użytkownika do rejestracji
     def navigate_to_registration(self):
         show_registration_screen(
             self.root,
-            self,  # Przekazujemy kontroler
+            self,
             on_success=self.navigate_to_login,
             on_navigate_login=self.navigate_to_login,
-            on_back=self.navigate_to_login
+            on_back=self.navigate_to_login,
         )
 
     # Przeniesienie użytkownika do dashboard po zalogowaniu
@@ -88,17 +106,16 @@ class STMPGuiController:
         self.current_username = username
         show_dashboard_screen(
             self.root,
-            self,  # Przekazujemy kontroler
+            self,
             username=self.current_username,
-            on_logout=self.handle_logout
+            on_logout=self.handle_logout,
         )
 
     def handle_logout(self):
         # Rozłączenie starego klienta w tle
         self.run_async(self.client.disconnect())
 
-        # Nowy klient = czyste połączenie
-        self.client = STMPClient(host="127.0.0.1", port=8888)
+        self.client = STMPClient(host=self._host, port=self._port, local_host=self._local_host)
         future = self.run_async(self.client.connect())
 
         def on_reconnected():
@@ -115,8 +132,18 @@ class STMPGuiController:
 
 
 def main():
+    args = parse_args()
+
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format=f"%(asctime)s [{args.label}] [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
     root = tk.Tk()
-    coordinator = STMPGuiController(root)
+    root.title(f"STMP — {args.label}")   # Rozróżnienie okien na pasku zadań (dla 2 klientów)
+
+    coordinator = STMPGuiController(root, host=args.host, port=args.port, label=args.label, local_host=args.local_host)
     coordinator.start_application()
     root.mainloop()
 

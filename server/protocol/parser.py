@@ -27,6 +27,10 @@ ALLOWED_TYPES = {
 }
 
 
+class FrameTimeoutError(Exception):
+    """Raised when a frame has started but was not completed in time."""
+
+
 def _build_error(error_code: int, message: str) -> dict:
     return {
         "ok": False,
@@ -79,19 +83,25 @@ async def _read_exact(reader: asyncio.StreamReader, n: int) -> bytes:
     """
     Czyta dokladnie n bajtow.
     Rzuca asyncio.IncompleteReadError jesli klient sie rozlaczyl.
-    Rzuca asyncio.TimeoutError jesli minol FRAME_TIMEOUT.
+    Rzuca FrameTimeoutError jesli minol FRAME_TIMEOUT.
     """
-    return await asyncio.wait_for(reader.readexactly(n), timeout=FRAME_TIMEOUT)
+    try:
+        return await asyncio.wait_for(reader.readexactly(n), timeout=FRAME_TIMEOUT)
+    except asyncio.TimeoutError as exc:
+        raise FrameTimeoutError("Incomplete frame") from exc
 
 
 async def parse_message(reader: asyncio.StreamReader) -> dict:
     """
     Parsuje wiadomosc z klienta.
-    Rzuca IncompleteReadError lub TimeoutError jesli brak danych.
+    Rzuca IncompleteReadError jesli klient sie rozlaczyl.
+    Rzuca FrameTimeoutError jesli rozpoczeta ramka nie zostala ukonczona w czasie.
     Zwraca {"ok": True, "message": {...}} lub {"ok": False, "error_code": ..., "message": "..."}
     """
-    # Czytaj naglowek (4 bajty - rozmiar)
-    size_bytes = await _read_exact(reader, 4)
+    # Pierwszy bajt czeka bez FRAME_TIMEOUT; zewnetrzny serwerowy wait_for
+    # egzekwuje IDLE_TIMEOUT dla braku jakichkolwiek danych.
+    first_size_byte = await reader.readexactly(1)
+    size_bytes = first_size_byte + await _read_exact(reader, 3)
     message_size = int.from_bytes(size_bytes, byteorder="big")
 
     if message_size <= 0:

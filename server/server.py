@@ -3,7 +3,7 @@ import logging
 import ssl
 from pathlib import Path
 
-from server.protocol.parser import parse_message, build_response
+from server.protocol.parser import FRAME_TIMEOUT, FrameTimeoutError, parse_message, build_response
 from server.protocol.router import dispatch, ConnectionState
 from server.services.session_service import mark_session_as_disconnected
 
@@ -150,6 +150,14 @@ async def _client_loop(
                     logger.warning("Nie udalo sie oznaczyc sesji jako rozlaczonej: %s", exc)
  
             state = ConnectionState.DISCONNECTED
+            break
+        except FrameTimeoutError:
+            logger.warning(
+                "Klient %s nie doslal rozpoczetej ramki w czasie %ds",
+                ip,
+                FRAME_TIMEOUT,
+            )
+            _mark_session_disconnected_for_reconnect(session_token, state, False, ip)
             break
         except asyncio.IncompleteReadError:
             logger.info("Klient %s rozlaczyl sie", ip)

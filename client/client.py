@@ -99,7 +99,7 @@ class STMPClient(TaskAPI):
         if response.get("type") == MsgType.LOGIN_OK:
             client_ip = self._get_local_ip()
             self.session.store_session(response["payload"], client_ip=client_ip)
-            logger.info("Sesja powiązana z IP: %s (STMP/1.0 §27)", client_ip)
+            logger.info("Sesja powiązana z IP: %s", client_ip)
 
         elif response.get("type") == MsgType.BYE:
             self.session.clear_session()

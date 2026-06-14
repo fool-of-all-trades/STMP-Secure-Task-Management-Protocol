@@ -71,6 +71,38 @@ High-level flow:
 6. server sends an STMP response
 7. client updates the user view accordingly
 
+## Start-up instructions
+
+Execute all commands from the project's root directory.
+
+### 1. Database (PostgreSQL)
+
+```bash
+docker compose up -d
+```
+
+### 2. Server
+
+```bash
+python -m server.server
+```
+
+The server must be running at all times when clients are using it.
+
+### 3. Client
+
+#### One client
+
+```bash
+python client/interface/main.py
+```
+
+#### Two clients (multiple session testing)
+
+```bash
+python client/launch_two_clients.py
+```
+
 ## Authors
 
 - Joanna Kliś
